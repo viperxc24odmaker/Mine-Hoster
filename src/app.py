@@ -1,4 +1,6 @@
 import sys
+import threading
+import time
 from pathlib import Path
 import flet as ft
 from src import server_manager as _server_manager
@@ -64,7 +66,27 @@ def _start_server_with_auto_setup(self, name):
     except Exception as exc:
         self._emit(name, f'[ERROR] Server setup failed: {exc}')
         return False
-    return _original_start_server(self, name)
+
+    # Some Java server distributions can exit immediately on their first
+    # process creation while they finish first-run initialization. Retry once
+    # only when the process actually died; never loop indefinitely.
+    for attempt in range(2):
+        started = _original_start_server(self, name)
+        if not started:
+            return False
+        if attempt == 0:
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                if self.is_running(name):
+                    return True
+                time.sleep(0.1)
+            if self.is_running(name):
+                return True
+            self._emit(name, '[MineHoster] Server exited during first startup; retrying once...')
+            time.sleep(0.5)
+            continue
+        return self.is_running(name)
+    return False
 
 
 _server_manager.ServerManager.start_server = _start_server_with_auto_setup
@@ -78,6 +100,8 @@ class MineHosterApp:
         self.nav_refs = {}
         self._main_content = None
         self.starting_servers = set()
+        self._navigation_token = 0
+        self._navigation_lock = threading.Lock()
 
     def initialize(self):
         page = self.page
@@ -151,6 +175,29 @@ class MineHosterApp:
             ink=True,
         )
 
+    def _set_nav_state(self, view_key):
+        self.current_view = view_key
+        for key, container in self.nav_refs.items():
+            active = key == view_key
+            row = container.content
+            row.controls[0].color = COLORS['accent'] if active else COLORS['muted']
+            row.controls[1].color = COLORS['text'] if active else COLORS['subtext']
+            container.bgcolor = COLORS['accent_soft'] if active else None
+
+    def _show_navigation_loading(self, view_key):
+        self._set_nav_state(view_key)
+        self._main_content.content = ft.Container(
+            content=ft.Column([
+                ft.ProgressRing(color=COLORS['accent']),
+                ft.Text('Loading section…', color=COLORS['subtext'], size=12),
+            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, alignment=ft.MainAxisAlignment.CENTER, spacing=12),
+            expand=True,
+        )
+        try:
+            self.page.update()
+        except Exception:
+            pass
+
     def navigate(self, view_key):
         views = {
             'dashboard': DashboardView,
@@ -164,26 +211,30 @@ class MineHosterApp:
             'hosting': HostingSettingsView,
         }
         view_cls = views.get(view_key, DashboardView)
-        try:
-            new_content = view_cls(self).build()
-        except Exception as exc:
-            new_content = ft.Container(
-                content=ft.Column([
-                    ft.Text('Could not load this section', size=22, weight=ft.FontWeight.BOLD, color=COLORS['text']),
-                    ft.Text(str(exc), color=COLORS['danger'], selectable=True),
-                    ft.ElevatedButton('Back to Dashboard', bgcolor=COLORS['accent'], color=COLORS['text'], on_click=lambda e: self.navigate('dashboard')),
-                ], spacing=12),
-                padding=32, expand=True,
-            )
-        self.current_view = view_key
-        self._main_content.content = new_content
-        for key, container in self.nav_refs.items():
-            active = key == view_key
-            row = container.content
-            row.controls[0].color = COLORS['accent'] if active else COLORS['muted']
-            row.controls[1].color = COLORS['text'] if active else COLORS['subtext']
-            container.bgcolor = COLORS['accent_soft'] if active else None
-        try:
-            self.page.update()
-        except Exception:
-            pass
+        with self._navigation_lock:
+            self._navigation_token += 1
+            token = self._navigation_token
+        self._show_navigation_loading(view_key)
+
+        def build_view():
+            try:
+                new_content = view_cls(self).build()
+            except Exception as exc:
+                new_content = ft.Container(
+                    content=ft.Column([
+                        ft.Text('Could not load this section', size=22, weight=ft.FontWeight.BOLD, color=COLORS['text']),
+                        ft.Text(str(exc), color=COLORS['danger'], selectable=True),
+                        ft.ElevatedButton('Back to Dashboard', bgcolor=COLORS['accent'], color=COLORS['text'], on_click=lambda e: self.navigate('dashboard')),
+                    ], spacing=12),
+                    padding=32, expand=True,
+                )
+            with self._navigation_lock:
+                if token != self._navigation_token:
+                    return
+            self._main_content.content = new_content
+            try:
+                self.page.update()
+            except Exception:
+                pass
+
+        threading.Thread(target=build_view, daemon=True, name=f'MineHosterNav-{view_key}').start()
