@@ -46,7 +46,7 @@ def _java_version(command: str) -> Optional[int]:
 
 
 def _download(url: str, target: Path, progress_cb: Optional[Callable] = None, label: str = "Downloading"):
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/octet-stream"})
     with urllib.request.urlopen(request, timeout=120) as response, target.open("wb") as output:
         total = int(response.headers.get("Content-Length", 0))
         done = 0
@@ -61,19 +61,27 @@ def _download(url: str, target: Path, progress_cb: Optional[Callable] = None, la
 
 
 def _extract_archive(archive: Path, destination: Path):
+    """Extract a JRE archive based on its actual magic bytes, not its .part suffix."""
     temporary = destination.with_name(destination.name + ".extracting")
     shutil.rmtree(temporary, ignore_errors=True)
     temporary.mkdir(parents=True, exist_ok=True)
     try:
-        if archive.suffix.lower() == ".zip":
-            with zipfile.ZipFile(archive) as zf: zf.extractall(temporary)
+        with archive.open("rb") as stream:
+            magic = stream.read(4)
+        if magic[:2] == b"PK":
+            with zipfile.ZipFile(archive) as zf:
+                zf.extractall(temporary)
+        elif magic == b"\x1f\x8b\x08\x00" or magic[:2] == b"\x1f\x8b":
+            with tarfile.open(archive, "r:gz") as tf:
+                tf.extractall(temporary)
         else:
-            with tarfile.open(archive, "r:gz") as tf: tf.extractall(temporary)
+            raise RuntimeError("The JRE download is not a valid ZIP or GZIP archive. The download may have returned an error page instead of Java.")
         roots = [p for p in temporary.iterdir() if p.is_dir()]
         source = roots[0] if len(roots) == 1 else temporary
         if not _java_binary(source).exists():
             matches = list(temporary.rglob("java.exe" if os.name == "nt" else "java"))
-            if not matches: raise RuntimeError("Downloaded Java archive does not contain a runnable Java runtime.")
+            if not matches:
+                raise RuntimeError("Downloaded Java archive does not contain a runnable Java runtime.")
             source = matches[0].parent.parent
         shutil.rmtree(destination, ignore_errors=True)
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -109,7 +117,8 @@ def download_java(required: int, progress_cb: Optional[Callable] = None) -> str:
         try:
             url = ADOPTIUM_API.format(version=required, os_name=os_name, arch=arch)
             _download(url, archive, progress_cb, f"Downloading JRE {required}")
-            if archive.stat().st_size < 1024 * 1024: raise RuntimeError("Downloaded JRE archive is unexpectedly small.")
+            if archive.stat().st_size < 1024 * 1024:
+                raise RuntimeError("Downloaded JRE archive is unexpectedly small; the server may have returned an error response.")
             if progress_cb: progress_cb("installing", f"Installing JRE {required}...", 100)
             _extract_archive(archive, runtime_root)
         finally:
