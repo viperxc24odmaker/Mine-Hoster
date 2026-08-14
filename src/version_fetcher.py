@@ -8,6 +8,7 @@ PAPER_V3 = "https://fill.papermc.io/v3/projects/paper"
 PAPER_V2 = "https://api.papermc.io/v2/projects/paper"
 FABRIC_META = "https://meta.fabricmc.net/v2"
 FORGE_MAVEN = "https://files.minecraftforge.net/net/minecraftforge/forge/maven-metadata.json"
+BDS_LATEST = "https://aka.ms/MinecraftBDS"
 USER_AGENT = "MineHoster/2.0 (https://github.com/viperxc24odmaker/Mine-Hoster)"
 MIN_VERSION = "1.12"
 
@@ -153,7 +154,11 @@ def fetch_forge_versions() -> dict[str, str]:
 
 
 def fetch_bedrock_versions() -> dict[str, str]:
+    # The official aka.ms redirect is maintained by Microsoft/Mojang and resolves to
+    # the current stable BDS archive. Keep a known-good historical fallback for
+    # temporary redirect/network failures.
     return {
+        "Latest": BDS_LATEST,
         "1.21.51": "https://www.minecraft.net/bedrockdedicatedserver/bin-win/bedrock-server-1.21.51.02.zip",
         "1.21.44": "https://www.minecraft.net/bedrockdedicatedserver/bin-win/bedrock-server-1.21.44.01.zip",
         "1.21.40": "https://www.minecraft.net/bedrockdedicatedserver/bin-win/bedrock-server-1.21.40.02.zip",
@@ -167,7 +172,13 @@ def fetch_bedrock_versions() -> dict[str, str]:
 
 
 def get_versions_for_loader(loader: str) -> dict[str, str]:
-    fetchers = {"vanilla": fetch_vanilla_versions, "paper": fetch_paper_versions, "fabric": fetch_fabric_versions, "forge": fetch_forge_versions, "bedrock": fetch_bedrock_versions}
+    fetchers = {
+        "vanilla": fetch_vanilla_versions,
+        "paper": fetch_paper_versions,
+        "fabric": fetch_fabric_versions,
+        "forge": fetch_forge_versions,
+        "bedrock": fetch_bedrock_versions,
+    }
     fetcher = fetchers.get(loader)
     return fetcher() if fetcher else {}
 
