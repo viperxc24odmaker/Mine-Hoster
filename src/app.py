@@ -1,4 +1,8 @@
 import flet as ft
+
+from src import server_manager as _server_manager
+from src.java_runtime import ensure_java
+from src.version_fetcher import get_versions_for_loader
 from src.theme import COLORS
 from src.views.console import ConsoleView
 from src.views.create_server import CreateServerView
@@ -7,6 +11,76 @@ from src.views.files import FileManagerView
 from src.views.players import PlayersView
 from src.views.plugins import PluginsView
 from src.views.settings import SettingsView
+
+
+# MineHoster owns its server runtime. Prefer a compatible installed Java, then
+# transparently install a private Temurin JRE instead of making users configure JAVA_HOME.
+_server_manager._find_java = ensure_java
+_original_start_server = _server_manager.ServerManager.start_server
+
+
+def _ensure_server_assets(manager, cfg):
+    """Repair/download missing runtime files before a server is launched."""
+    from pathlib import Path
+
+    folder = Path(cfg.folder)
+    folder.mkdir(parents=True, exist_ok=True)
+
+    if cfg.loader == "bedrock":
+        if not (folder / "bedrock_server.exe").exists():
+            manager._emit(cfg.name, "[MineHoster] Bedrock server files are missing; downloading them...")
+            urls = get_versions_for_loader("bedrock")
+            url = urls.get(cfg.version) or next(iter(urls.values()), None)
+            if not url:
+                raise RuntimeError("No Bedrock server download is available for this version.")
+            manager._create_bedrock(cfg, folder, url, lambda kind, message: manager._emit(cfg.name, f"[Download] {message}"))
+
+    elif cfg.loader == "forge":
+        script = folder / ("run.bat" if _server_manager.os.name == "nt" else "run.sh")
+        if not script.exists():
+            manager._emit(cfg.name, "[MineHoster] Forge server files are missing; downloading/installing them...")
+            urls = get_versions_for_loader("forge")
+            url = urls.get(cfg.version)
+            if not url:
+                raise RuntimeError(f"No Forge installer is available for Minecraft {cfg.version}.")
+            manager._prepare_forge(cfg, folder, url, lambda kind, message: manager._emit(cfg.name, f"[Download] {message}"))
+
+    else:
+        jar = folder / "server.jar"
+        if not jar.exists() or jar.stat().st_size < 1024:
+            manager._emit(cfg.name, f"[MineHoster] {cfg.loader.title()} server.jar is missing; downloading it...")
+            urls = get_versions_for_loader(cfg.loader)
+            url = urls.get(cfg.version)
+            if not url:
+                raise RuntimeError(f"No {cfg.loader} server download is available for Minecraft {cfg.version}.")
+            part = folder / "server.jar.part"
+            try:
+                manager._download(url, part, lambda kind, message: manager._emit(cfg.name, f"[Download] {message}"))
+                if part.stat().st_size < 1024:
+                    raise RuntimeError("Downloaded server.jar is unexpectedly small.")
+                part.replace(jar)
+            finally:
+                part.unlink(missing_ok=True)
+
+    if cfg.loader != "bedrock" and not (folder / "eula.txt").exists():
+        (folder / "eula.txt").write_text("eula=true\n", encoding="utf-8")
+    if not (folder / "server.properties").exists() and cfg.loader != "bedrock":
+        manager._write_properties(folder, cfg)
+
+
+def _start_server_with_auto_setup(self, name):
+    cfg = self.servers.get(name)
+    if not cfg or self.is_running(name):
+        return bool(cfg and self.is_running(name))
+    try:
+        _ensure_server_assets(self, cfg)
+    except Exception as exc:
+        self._emit(name, f"[ERROR] Server setup failed: {exc}")
+        return False
+    return _original_start_server(self, name)
+
+
+_server_manager.ServerManager.start_server = _start_server_with_auto_setup
 
 
 class MineHosterApp:
