@@ -5,6 +5,8 @@ from src.theme import COLORS
 
 
 class DashboardView:
+    """Compact hosting-panel dashboard inspired by modern Minecraft panels."""
+
     def __init__(self, app):
         self.app = app
         self.sm = ServerManager.get()
@@ -15,66 +17,85 @@ class DashboardView:
         running = sum(self.sm.is_running(s.name) for s in servers)
         starting = sum(s.name in self.app.starting_servers for s in servers)
         stopped = max(0, total - running - starting)
+
         return ft.Container(
             content=ft.Column([
                 self._header(total, running, starting),
-                ft.Row([
-                    self._stat_card("Servers", total, "Total managed", COLORS["accent"]),
-                    self._stat_card("Online", running, "Ready to join", COLORS["accent2"]),
-                    self._stat_card("Starting", starting, "Booting now", COLORS["accent"]),
-                    self._stat_card("Offline", stopped, "Stopped safely", COLORS["muted"]),
-                ], spacing=10),
-                ft.Container(height=24),
+                self._stats(total, running, starting, stopped),
+                ft.Container(height=20),
                 ft.Row([
                     ft.Column([
-                        ft.Text("Your servers", color=COLORS["text"], size=18, weight=ft.FontWeight.BOLD),
-                        ft.Text("A clean command center for every Minecraft server.", color=COLORS["subtext"], size=11),
-                    ], spacing=3),
-                    ft.ElevatedButton("+  New server", bgcolor=COLORS["accent"], color=COLORS["text"], on_click=lambda e: self.app.navigate("create")),
+                        ft.Text("Servers", color=COLORS["text"], size=19, weight=ft.FontWeight.BOLD),
+                        ft.Text("Manage your Minecraft instances from one place.", color=COLORS["subtext"], size=11),
+                    ], spacing=2, expand=True),
+                    ft.ElevatedButton(
+                        "+  New server",
+                        bgcolor=COLORS["accent"],
+                        color=COLORS["text"],
+                        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=9), padding=ft.padding.symmetric(horizontal=16, vertical=12)),
+                        on_click=lambda e: self.app.navigate("create"),
+                    ),
                 ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 ft.Container(height=10),
                 ft.Column([self._server_card(s) for s in servers] or [self._empty_state()], spacing=10, scroll=ft.ScrollMode.AUTO, expand=True),
             ], expand=True, spacing=0),
-            padding=30,
+            padding=ft.padding.symmetric(horizontal=28, vertical=24),
             expand=True,
+            bgcolor=COLORS["bg"],
         )
 
     def _header(self, total, running, starting):
-        text = f"{running} online" + (f" · {starting} starting" if starting else "") + f" · {total} total"
+        state = "All systems operational" if not starting else f"{starting} server{'s' if starting != 1 else ''} starting"
+        state_color = COLORS["accent2"] if not starting else COLORS["warning"]
         return ft.Container(
             content=ft.Row([
                 ft.Column([
-                    ft.Text("Dashboard", color=COLORS["text"], size=27, weight=ft.FontWeight.BOLD),
-                    ft.Text(text, color=COLORS["subtext"], size=12),
-                ], spacing=4),
+                    ft.Text("Dashboard", color=COLORS["text"], size=28, weight=ft.FontWeight.BOLD),
+                    ft.Text(f"{running} online  •  {total} total", color=COLORS["subtext"], size=12),
+                ], spacing=3),
                 ft.Container(
                     content=ft.Row([
-                        ft.Container(width=7, height=7, bgcolor=COLORS["accent2"], border_radius=10),
-                        ft.Text("MineHoster is ready", color=COLORS["subtext"], size=11),
-                    ], spacing=7),
+                        ft.Container(width=7, height=7, bgcolor=state_color, border_radius=10),
+                        ft.Text(state, color=COLORS["text"], size=10, weight=ft.FontWeight.W_500),
+                    ], spacing=8),
                     bgcolor=COLORS["surface2"],
                     border=ft.border.all(1, COLORS["border"]),
-                    border_radius=20,
+                    border_radius=18,
                     padding=ft.padding.symmetric(horizontal=12, vertical=8),
                 ),
             ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-            padding=ft.padding.only(bottom=22),
+            padding=ft.padding.only(bottom=18),
         )
+
+    def _stats(self, total, running, starting, stopped):
+        return ft.Row([
+            self._stat_card("SERVERS", total, "Managed", COLORS["accent"]),
+            self._stat_card("ONLINE", running, "Ready to join", COLORS["accent2"]),
+            self._stat_card("STARTING", starting, "Booting now", COLORS["warning"]),
+            self._stat_card("OFFLINE", stopped, "Stopped", COLORS["muted"]),
+        ], spacing=10)
 
     def _stat_card(self, title, value, subtitle, accent):
         return ft.Container(
-            content=ft.Column([
-                ft.Text(title.upper(), color=COLORS["muted"], size=9, weight=ft.FontWeight.BOLD),
-                ft.Text(str(value), color=accent, size=27, weight=ft.FontWeight.BOLD),
-                ft.Text(subtitle, color=COLORS["subtext"], size=10),
-            ], spacing=4),
-            bgcolor=COLORS["card"], border=ft.border.all(1, COLORS["border"]), border_radius=14, padding=16, expand=True,
+            content=ft.Row([
+                ft.Container(width=3, height=42, bgcolor=accent, border_radius=3),
+                ft.Column([
+                    ft.Text(title, color=COLORS["muted"], size=8, weight=ft.FontWeight.BOLD),
+                    ft.Text(str(value), color=COLORS["text"], size=23, weight=ft.FontWeight.BOLD),
+                    ft.Text(subtitle, color=COLORS["subtext"], size=9),
+                ], spacing=1),
+            ], spacing=11),
+            bgcolor=COLORS["card"],
+            border=ft.border.all(1, COLORS["border"]),
+            border_radius=11,
+            padding=13,
+            expand=True,
         )
 
     def _server_card(self, server):
         running = self.sm.is_running(server.name)
         starting = server.name in self.app.starting_servers
-        accent = COLORS["accent"] if starting else (COLORS["accent2"] if running else COLORS["muted"])
+        accent = COLORS["warning"] if starting else (COLORS["accent2"] if running else COLORS["muted"])
         status = "STARTING" if starting else ("ONLINE" if running else "OFFLINE")
 
         def refresh_dashboard():
@@ -104,28 +125,39 @@ class DashboardView:
                 self.sm.stop_server(server.name)
                 refresh_dashboard()
             else:
+                # Mark STARTING before starting the worker so the UI changes immediately.
                 self.app.starting_servers.add(server.name)
-                self.app.navigate("dashboard")
+                refresh_dashboard()
                 threading.Thread(target=start_worker, daemon=True).start()
 
         def console(e):
             self.app.selected_server = server.name
             self.app.navigate("console")
 
+        def settings(e):
+            self.app.selected_server = server.name
+            self.app.navigate("settings")
+
         def delete(e):
             if server.name in self.app.starting_servers:
                 return
+
             def cancel(ev):
                 dialog.open = False
                 self.app.page.update()
+
             def confirm(ev):
                 dialog.open = False
                 self.app.page.update()
                 self.app.starting_servers.discard(server.name)
-                self.sm.delete_server(server.name)
+                try:
+                    self.sm.delete_server(server.name)
+                except Exception as exc:
+                    self.sm._emit(server.name, f"[ERROR] Delete failed: {exc}")
                 if self.app.selected_server == server.name:
                     self.app.selected_server = None
                 self.app.navigate("dashboard")
+
             dialog = ft.AlertDialog(
                 modal=True,
                 title=ft.Text(f"Delete {server.name}?"),
@@ -139,32 +171,59 @@ class DashboardView:
             dialog.open = True
             self.app.page.update()
 
+        meta = f"{server.loader.title()}  •  {server.version}  •  {server.ram_mb} MB RAM  •  Port {server.port}"
+        action_style = ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8), padding=ft.padding.symmetric(horizontal=11, vertical=9))
+
         return ft.Container(
-            content=ft.Row([
-                ft.Column([
-                    ft.Row([
-                        ft.Text(server.name, color=COLORS["text"], size=14, weight=ft.FontWeight.BOLD),
-                        ft.Container(content=ft.Text(status, color=accent, size=9, weight=ft.FontWeight.BOLD), bgcolor=accent + "22", border_radius=12, padding=ft.padding.symmetric(horizontal=8, vertical=4)),
-                    ], spacing=9),
-                    ft.Text(f"{server.loader.title()}  •  {server.version}  •  Port {server.port}  •  {server.ram_mb} MB RAM", color=COLORS["subtext"], size=10),
-                    ft.ProgressBar(visible=starting, value=None, color=COLORS["accent"], bgcolor=COLORS["surface2"]),
-                ], spacing=7, expand=True),
+            content=ft.Column([
                 ft.Row([
-                    ft.ElevatedButton("Console", bgcolor=COLORS["surface2"], color=COLORS["text"], on_click=console),
-                    ft.ElevatedButton("Delete", bgcolor=COLORS["danger"], color=COLORS["text"], disabled=starting, on_click=delete),
-                    ft.ElevatedButton("Starting…" if starting else ("Stop" if running else "Start"), disabled=starting, bgcolor=COLORS["danger"] if running else COLORS["accent2"], color=COLORS["text"], on_click=toggle),
-                ], spacing=7),
-            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-            bgcolor=COLORS["card"], border=ft.border.all(1, COLORS["border"]), border_radius=14, padding=17,
+                    ft.Container(
+                        content=ft.Text("M", size=16, weight=ft.FontWeight.BOLD, color=COLORS["text"]),
+                        width=38, height=38, alignment=ft.alignment.center,
+                        bgcolor=COLORS["accent_soft"], border_radius=10,
+                    ),
+                    ft.Column([
+                        ft.Row([
+                            ft.Text(server.name, color=COLORS["text"], size=14, weight=ft.FontWeight.BOLD),
+                            ft.Container(
+                                content=ft.Text(status, color=accent, size=8, weight=ft.FontWeight.BOLD),
+                                bgcolor=accent + "22", border_radius=12,
+                                padding=ft.padding.symmetric(horizontal=8, vertical=4),
+                            ),
+                        ], spacing=8),
+                        ft.Text(meta, color=COLORS["subtext"], size=9),
+                    ], spacing=4, expand=True),
+                    ft.Text("●" if running else ("◌" if starting else "○"), color=accent, size=12),
+                ], spacing=12),
+                ft.Divider(height=1, color=COLORS["border"]),
+                ft.Row([
+                    ft.Text("Local server instance", color=COLORS["muted"], size=9, expand=True),
+                    ft.TextButton("Console", style=action_style, on_click=console),
+                    ft.TextButton("Settings", style=action_style, on_click=settings),
+                    ft.TextButton("Delete", style=action_style, on_click=delete, disabled=starting),
+                    ft.ElevatedButton(
+                        "Starting…" if starting else ("Stop" if running else "Start"),
+                        bgcolor=COLORS["danger"] if running else COLORS["accent2"],
+                        color=COLORS["text"], disabled=starting,
+                        style=action_style, on_click=toggle,
+                    ),
+                ], spacing=6),
+                ft.ProgressBar(visible=starting, value=None, color=COLORS["warning"], bgcolor=COLORS["surface2"]),
+            ], spacing=9),
+            bgcolor=COLORS["card"],
+            border=ft.border.all(1, COLORS["border"]),
+            border_radius=12,
+            padding=15,
         )
 
     def _empty_state(self):
         return ft.Container(
             content=ft.Column([
-                ft.Text("✦", color=COLORS["accent"], size=35),
-                ft.Text("Your server center is empty", color=COLORS["text"], size=17, weight=ft.FontWeight.BOLD),
-                ft.Text("Create a server and MineHoster handles the setup.", color=COLORS["subtext"], size=11),
-                ft.ElevatedButton("Create your first server", bgcolor=COLORS["accent"], color=COLORS["text"], on_click=lambda e: self.app.navigate("create")),
-            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=8),
-            alignment=ft.alignment.center, padding=60, bgcolor=COLORS["card"], border=ft.border.all(1, COLORS["border"]), border_radius=14,
+                ft.Container(content=ft.Text("+", color=COLORS["accent"], size=28, weight=ft.FontWeight.BOLD), width=52, height=52, alignment=ft.alignment.center, bgcolor=COLORS["accent_soft"], border_radius=14),
+                ft.Text("No servers yet", color=COLORS["text"], size=17, weight=ft.FontWeight.BOLD),
+                ft.Text("Create your first Minecraft server and MineHoster will handle the setup.", color=COLORS["subtext"], size=10),
+                ft.ElevatedButton("Create server", bgcolor=COLORS["accent"], color=COLORS["text"], on_click=lambda e: self.app.navigate("create")),
+            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=9),
+            alignment=ft.alignment.center, padding=55,
+            bgcolor=COLORS["card"], border=ft.border.all(1, COLORS["border"]), border_radius=12,
         )
