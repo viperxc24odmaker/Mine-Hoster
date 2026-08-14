@@ -2,8 +2,8 @@ name: Build MineHoster
 
 on:
   push:
-    tags:
-      - 'V*'
+    branches:
+      - main
 
 jobs:
   build-windows:
@@ -33,11 +33,3 @@ jobs:
         with:
           name: MineHoster-Windows
           path: dist/MineHoster.exe
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/MineHoster.exe
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
