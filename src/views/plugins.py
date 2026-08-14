@@ -16,11 +16,26 @@ class PluginsView:
         self.selected = app.selected_server or (servers[0].name if servers else None)
         self.client = ModrinthClient()
         self.plugin_list = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, expand=True)
-        self.market_list = ft.Column([ft.Text("Search Modrinth to find compatible projects.", color=COLORS["subtext"])], spacing=10, scroll=ft.ScrollMode.AUTO, expand=True)
+        self.market_list = ft.Column(
+            [ft.Text("Search Modrinth to find compatible projects.", color=COLORS["subtext"])],
+            spacing=10,
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
+        )
         self.status_text = ft.Text("Marketplace ready.", color=COLORS["subtext"], size=12)
-        self.search_field = ft.TextField(label="Search Modrinth", hint_text="Essentials, ViaVersion, LuckPerms...", expand=True, on_submit=self._search)
+        self.search_field = ft.TextField(
+            label="Search Modrinth",
+            hint_text="Essentials, ViaVersion, LuckPerms...",
+            expand=True,
+            on_submit=self._search,
+        )
         self.version_field = ft.TextField(label="Minecraft version", hint_text="1.21.8", width=150)
-        self.loader_field = ft.Dropdown(label="Loader", width=150, options=[ft.dropdown.Option(v) for v in ["Auto", "paper", "purpur", "spigot", "bukkit", "fabric", "forge", "neoforge"]], value="Auto")
+        self.loader_field = ft.Dropdown(
+            label="Loader",
+            width=150,
+            options=[ft.dropdown.Option(v) for v in ["Auto", "paper", "purpur", "spigot", "bukkit", "fabric", "forge", "neoforge"]],
+            value="Auto",
+        )
         self.progress = ft.ProgressBar(value=0, visible=False, expand=True)
 
     def _cfg(self):
@@ -40,32 +55,95 @@ class PluginsView:
     def build(self):
         servers = self.sm.get_servers()
         if not servers:
-            return ft.Container(content=ft.Column([ft.Text("Plugins & Mods", size=24, weight=ft.FontWeight.BOLD, color=COLORS["text"]), ft.Text("Create a server first to use the marketplace.", color=COLORS["subtext"])], spacing=10), padding=32, expand=True)
+            return ft.Container(
+                content=ft.Column([
+                    ft.Text("Plugins & Mods", size=24, weight=ft.FontWeight.BOLD, color=COLORS["text"]),
+                    ft.Text("Create a server first to use the marketplace.", color=COLORS["subtext"]),
+                ], spacing=10),
+                padding=32,
+                expand=True,
+            )
+
         cfg = self._cfg()
         kind = "Mods" if self._project_type() == "mod" else "Plugins"
         if cfg:
             self.version_field.value = cfg.version
-        server_dd = ft.Dropdown(label="Server", value=self.selected, options=[ft.dropdown.Option(s.name) for s in servers], on_change=self._on_server_change, border_color=COLORS["border"], focused_border_color=COLORS["accent"], color=COLORS["text"], bgcolor=COLORS["surface2"], width=220)
-        return ft.Container(
+
+        server_dd = ft.Dropdown(
+            label="Server",
+            value=self.selected,
+            options=[ft.dropdown.Option(s.name) for s in servers],
+            on_change=self._on_server_change,
+            border_color=COLORS["border"],
+            focused_border_color=COLORS["accent"],
+            color=COLORS["text"],
+            bgcolor=COLORS["surface2"],
+            width=220,
+        )
+
+        refresh_button = ft.IconButton(
+            icon=ft.icons.REFRESH,
+            tooltip="Refresh installed plugins",
+            on_click=lambda e: self._refresh_plugins(),
+        )
+
+        result = ft.Container(
             content=ft.Column([
-                ft.Row([ft.Column([ft.Text(f"{kind} Marketplace", size=24, weight=ft.FontWeight.BOLD, color=COLORS["text"]), ft.Text("Browse and install compatible projects from Modrinth.", color=COLORS["subtext"], size=13)], expand=True), server_dd]),
-                ft.Container(content=ft.Row([self.search_field, self.version_field, self.loader_field, ft.ElevatedButton("Search", bgcolor=COLORS["accent"], color=COLORS["text"], on_click=self._search)], spacing=10), bgcolor=COLORS["card"], border_radius=12, padding=14, border=ft.border.all(1, COLORS["border"])),
+                ft.Row([
+                    ft.Column([
+                        ft.Text(f"{kind} Marketplace", size=24, weight=ft.FontWeight.BOLD, color=COLORS["text"]),
+                        ft.Text("Browse and install compatible projects from Modrinth.", color=COLORS["subtext"], size=13),
+                    ], expand=True),
+                    server_dd,
+                ]),
+                ft.Container(
+                    content=ft.Row([
+                        self.search_field,
+                        self.version_field,
+                        self.loader_field,
+                        ft.ElevatedButton("Search", bgcolor=COLORS["accent"], color=COLORS["text"], on_click=self._search),
+                    ], spacing=10),
+                    bgcolor=COLORS["card"],
+                    border_radius=12,
+                    padding=14,
+                    border=ft.border.all(1, COLORS["border"]),
+                ),
                 ft.Row([self.progress, self.status_text], spacing=12),
                 ft.Row([
-                    ft.Container(content=ft.Column([ft.Text("Modrinth Marketplace", size=16, weight=ft.FontWeight.BOLD, color=COLORS["text"]), self.market_list], expand=True), bgcolor=COLORS["card"], border_radius=12, padding=16, expand=True, border=ft.border.all(1, COLORS["border"])),
-                    ft.Container(content=ft.Column([ft.Row([ft.Text("Installed", size=16, weight=ft.FontWeight.BOLD, color=COLORS["text"]), ft.IconButton(ft.Icons.REFRESH, tooltip="Refresh", on_click=lambda e: self._refresh_plugins())]), self.plugin_list], expand=True), bgcolor=COLORS["card"], border_radius=12, padding=16, expand=True, border=ft.border.all(1, COLORS["border"])),
+                    ft.Container(
+                        content=ft.Column([
+                            ft.Text("Modrinth Marketplace", size=16, weight=ft.FontWeight.BOLD, color=COLORS["text"]),
+                            self.market_list,
+                        ], expand=True),
+                        bgcolor=COLORS["card"], border_radius=12, padding=16, expand=True,
+                        border=ft.border.all(1, COLORS["border"]),
+                    ),
+                    ft.Container(
+                        content=ft.Column([
+                            ft.Row([ft.Text("Installed", size=16, weight=ft.FontWeight.BOLD, color=COLORS["text"]), refresh_button]),
+                            self.plugin_list,
+                        ], expand=True),
+                        bgcolor=COLORS["card"], border_radius=12, padding=16, expand=True,
+                        border=ft.border.all(1, COLORS["border"]),
+                    ),
                 ], expand=True, spacing=14),
-            ], expand=True, scroll=ft.ScrollMode.AUTO), padding=24, expand=True,
+            ], expand=True, scroll=ft.ScrollMode.AUTO),
+            padding=24,
+            expand=True,
         )
+        self._refresh_plugins(update=False)
+        return result
 
     def _search(self, e=None):
         query = (self.search_field.value or "").strip()
         version = (self.version_field.value or "").strip()
         loader = self._loader()
         self.status_text.value = "Searching Modrinth..."
+        self.status_text.color = COLORS["subtext"]
         self.progress.visible = True
         self.progress.value = None
         self._safe_update()
+
         def worker():
             try:
                 results = self.client.search(query, version, loader, 30)
@@ -83,7 +161,8 @@ class PluginsView:
             finally:
                 self.progress.visible = False
                 self._safe_update()
-        threading.Thread(target=worker, daemon=True).start()
+
+        threading.Thread(target=worker, daemon=True, name="MineHoster-ModrinthSearch").start()
 
     def _project_card(self, project, minecraft_version, loader):
         project_id = project.get("project_id") or project.get("slug")
@@ -92,10 +171,30 @@ class PluginsView:
         icon_url = project.get("icon_url")
         downloads = project.get("downloads", 0)
         follows = project.get("follows", 0)
+
         def install(e, pid=project_id, name=title):
             self._install_project(pid, name, minecraft_version, loader)
-        icon = ft.Image(src=icon_url, width=48, height=48, fit=ft.ImageFit.COVER, border_radius=10) if icon_url else ft.Container(width=48, height=48, bgcolor=COLORS["accent_soft"], border_radius=10, content=ft.Text("P", color=COLORS["accent"], size=20), alignment=ft.alignment.center)
-        return ft.Container(content=ft.Row([icon, ft.Column([ft.Text(title, size=15, weight=ft.FontWeight.BOLD, color=COLORS["text"]), ft.Text(description[:180] + ("…" if len(description) > 180 else ""), size=12, color=COLORS["subtext"]), ft.Text(f"↓ {downloads:,} downloads  •  ♥ {follows:,}", size=11, color=COLORS["subtext"])], expand=True, spacing=4), ft.ElevatedButton("Install", bgcolor=COLORS["accent"], color=COLORS["text"], on_click=install)], spacing=14), bgcolor=COLORS["surface2"], border_radius=10, padding=14, border=ft.border.all(1, COLORS["border"]))
+
+        if icon_url:
+            icon = ft.Image(src=icon_url, width=48, height=48, fit=ft.ImageFit.COVER)
+        else:
+            icon = ft.Container(
+                width=48, height=48, bgcolor=COLORS["accent_soft"], border_radius=10,
+                content=ft.Text("P", color=COLORS["accent"], size=20), alignment=ft.alignment.center,
+            )
+        return ft.Container(
+            content=ft.Row([
+                icon,
+                ft.Column([
+                    ft.Text(title, size=15, weight=ft.FontWeight.BOLD, color=COLORS["text"]),
+                    ft.Text(description[:180] + ("…" if len(description) > 180 else ""), size=12, color=COLORS["subtext"]),
+                    ft.Text(f"↓ {downloads:,} downloads  •  ♥ {follows:,}", size=11, color=COLORS["subtext"]),
+                ], expand=True, spacing=4),
+                ft.ElevatedButton("Install", bgcolor=COLORS["accent"], color=COLORS["text"], on_click=install),
+            ], spacing=14),
+            bgcolor=COLORS["surface2"], border_radius=10, padding=14,
+            border=ft.border.all(1, COLORS["border"]),
+        )
 
     def _install_project(self, project_id, name, minecraft_version, loader):
         if not self.selected:
@@ -104,6 +203,7 @@ class PluginsView:
         self.progress.visible = True
         self.progress.value = 0
         self._safe_update()
+
         def worker():
             try:
                 version = self.client.choose_version(project_id, minecraft_version, loader)
@@ -120,7 +220,8 @@ class PluginsView:
                     self.status_text.value = f"{name} is already installed."
                     self.status_text.color = COLORS["accent2"]
                 else:
-                    self.status_text.value = f"Installing {name} + {len(required)} required dependenc{'y' if len(required) == 1 else 'ies'}..."
+                    dep_word = "dependency" if len(required) == 1 else "dependencies"
+                    self.status_text.value = f"Installing {name} + {len(required)} required {dep_word}..."
                     def progress(done, total, file_name):
                         self.progress.value = (done / total) if total else None
                         self.status_text.value = f"Downloading {file_name}"
@@ -135,9 +236,10 @@ class PluginsView:
             finally:
                 self.progress.visible = False
                 self._safe_update()
-        threading.Thread(target=worker, daemon=True).start()
 
-    def _refresh_plugins(self):
+        threading.Thread(target=worker, daemon=True, name="MineHoster-ModrinthInstall").start()
+
+    def _refresh_plugins(self, update=True):
         if not self.selected:
             return
         names = self.sm.list_plugins(self.selected)
@@ -148,7 +250,8 @@ class PluginsView:
         else:
             for name in names:
                 self.plugin_list.controls.append(self._installed_row(name, kind))
-        self._safe_update()
+        if update:
+            self._safe_update()
 
     def _installed_row(self, name, kind):
         def remove(e, n=name):
@@ -156,7 +259,14 @@ class PluginsView:
             self.status_text.value = f"Removed {n}"
             self.status_text.color = COLORS["accent2"]
             self._refresh_plugins()
-        return ft.Container(content=ft.Row([ft.Text("🧩" if kind == "plugin" else "🧱", size=16), ft.Text(name, color=COLORS["text"], size=12, expand=True), ft.IconButton(ft.Icons.DELETE_OUTLINE, tooltip="Remove", on_click=remove)]), bgcolor=COLORS["surface2"], border_radius=8, padding=10)
+        return ft.Container(
+            content=ft.Row([
+                ft.Text("🧩" if kind == "plugin" else "🧱", size=16),
+                ft.Text(name, color=COLORS["text"], size=12, expand=True),
+                ft.IconButton(icon=ft.icons.DELETE_OUTLINE, tooltip="Remove", on_click=remove),
+            ]),
+            bgcolor=COLORS["surface2"], border_radius=8, padding=10,
+        )
 
     def _on_server_change(self, e):
         self.selected = e.control.value
