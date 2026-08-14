@@ -46,9 +46,9 @@ def _java_version(command: str) -> Optional[int]:
 
 
 def _download(url: str, target: Path, progress_cb: Optional[Callable] = None, label: str = "Downloading"):
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/octet-stream"})
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/octet-stream", "Accept-Encoding": "identity"})
     with urllib.request.urlopen(request, timeout=120) as response, target.open("wb") as output:
-        total = int(response.headers.get("Content-Length", 0))
+        total = int(response.headers.get("Content-Length", 0) or 0)
         done = 0
         while True:
             chunk = response.read(1024 * 1024)
@@ -71,7 +71,7 @@ def _extract_archive(archive: Path, destination: Path):
         if magic[:2] == b"PK":
             with zipfile.ZipFile(archive) as zf:
                 zf.extractall(temporary)
-        elif magic == b"\x1f\x8b\x08\x00" or magic[:2] == b"\x1f\x8b":
+        elif magic[:2] == b"\x1f\x8b":
             with tarfile.open(archive, "r:gz") as tf:
                 tf.extractall(temporary)
         else:
@@ -91,24 +91,34 @@ def _extract_archive(archive: Path, destination: Path):
 
 
 def installed_jres():
+    """Return every valid private JRE, including runtimes whose directory name changed."""
     result = []
     if not RUNTIMES_DIR.exists(): return result
-    for path in sorted(RUNTIMES_DIR.iterdir()):
-        if path.is_dir():
-            java = _java_binary(path)
-            version = _java_version(str(java)) if java.exists() else None
-            if version: result.append((version, str(java), path))
-    return result
+    seen = set()
+    for java_path in RUNTIMES_DIR.rglob("java.exe" if os.name == "nt" else "java"):
+        if not java_path.is_file() or java_path in seen: continue
+        version = _java_version(str(java_path))
+        if version:
+            root = java_path.parent.parent
+            key = str(java_path.resolve())
+            if key not in seen:
+                seen.add(key)
+                result.append((version, str(java_path), root))
+    return sorted(result, key=lambda item: (item[0], item[1]))
 
 
 def download_java(required: int, progress_cb: Optional[Callable] = None) -> str:
-    """Manually download and install a private Eclipse Temurin JRE."""
+    """Find an existing private JRE first; only download when no matching runtime exists."""
     os_name, arch = _platform_target()
-    runtime_root = RUNTIMES_DIR / f"temurin-{required}-{os_name}-{arch}"
-    local_java = _java_binary(runtime_root)
     with _INSTALL_LOCK:
+        for version, java, _root in installed_jres():
+            if version == required:
+                if progress_cb: progress_cb("done", f"JRE {required} is already installed. Reusing existing runtime.", 100)
+                return java
+        runtime_root = RUNTIMES_DIR / f"temurin-{required}-{os_name}-{arch}"
+        local_java = _java_binary(runtime_root)
         if _java_version(str(local_java)) == required:
-            if progress_cb: progress_cb("done", f"JRE {required} is already installed.", 100)
+            if progress_cb: progress_cb("done", f"JRE {required} is already installed. Reusing existing runtime.", 100)
             return str(local_java)
         RUNTIMES_DIR.mkdir(parents=True, exist_ok=True)
         if progress_cb: progress_cb("downloading", f"Downloading Eclipse Temurin JRE {required} ({os_name}/{arch})...", 0)
@@ -125,7 +135,7 @@ def download_java(required: int, progress_cb: Optional[Callable] = None) -> str:
             archive.unlink(missing_ok=True)
     if _java_version(str(local_java)) != required:
         raise RuntimeError(f"JRE {required} was downloaded, but could not be verified.")
-    if progress_cb: progress_cb("done", f"JRE {required} is ready.", 100)
+    if progress_cb: progress_cb("done", f"JRE {required} is ready and will be reused on future starts.", 100)
     return str(local_java)
 
 
@@ -147,4 +157,8 @@ def ensure_java(required: int, progress_cb: Optional[Callable] = None) -> str:
                     candidates.extend(str(p / "bin" / "java.exe") for p in sorted(base.iterdir(), reverse=True) if p.is_dir())
     for candidate in dict.fromkeys(candidates):
         if _java_version(candidate) == required: return candidate
+    for version, java, _root in installed_jres():
+        if version == required:
+            if progress_cb: progress_cb("done", f"JRE {required} found in MineHoster runtime cache. Reusing it.", 100)
+            return java
     return download_java(required, progress_cb)
