@@ -35,17 +35,19 @@ class ServerConfig:
 
 
 def _java_required(version: str) -> int:
+    parts = version.split(".")
     try:
-        major = int(version.split(".")[0])
+        major = int(parts[0])
+        minor = int(parts[1]) if major == 1 and len(parts) > 1 else major
     except (ValueError, IndexError):
         return 21
     if major >= 26:
         return 25
-    if major >= 20:
+    if minor >= 20:
         return 21
-    if major >= 17:
+    if minor >= 17:
         return 17
-    if major == 16:
+    if minor == 16:
         return 16
     return 11
 
