@@ -1,10 +1,12 @@
 import json
 import os
 import shutil
+import stat
 import subprocess
 import threading
 import time
 import urllib.request
+import zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -13,12 +15,12 @@ from src.java_runtime import ensure_java
 
 SERVERS_FILE = Path.home() / ".minehoster" / "servers.json"
 SERVERS_DIR = Path.home() / ".minehoster" / "servers"
-BDS_DOWNLOAD = "https://www.minecraft.net/bedrockdedicatedserver/bin-win/bedrock-server-1.21.51.02.zip"
+BDS_REDIRECT = "https://aka.ms/MinecraftBDS"
+BDS_FALLBACK = "https://www.minecraft.net/bedrockdedicatedserver/bin-win/bedrock-server-1.21.51.02.zip"
 USER_AGENT = "MineHoster/2.0 (https://github.com/viperxc24odmaker/Mine-Hoster)"
 
 
 def _hidden_process_kwargs():
-    """Return Windows flags that keep child console windows out of the user's way."""
     if os.name != "nt":
         return {}
     return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
@@ -59,6 +61,22 @@ def _java_required(version: str) -> int:
     if minor == 16:
         return 16
     return 11
+
+
+def _safe_extract_zip(archive: zipfile.ZipFile, destination: Path):
+    root = destination.resolve()
+    for member in archive.infolist():
+        target = (destination / member.filename).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError as exc:
+            raise RuntimeError(f"Unsafe archive entry rejected: {member.filename}") from exc
+        if member.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with archive.open(member, "r") as src, target.open("wb") as dst:
+            shutil.copyfileobj(src, dst)
 
 
 class ServerManager:
@@ -111,24 +129,43 @@ class ServerManager:
             except Exception:
                 pass
 
-    def _download(self, url, target, progress_cb=None, label="Downloading"):
-        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-        with urllib.request.urlopen(req, timeout=120) as response, target.open("wb") as out:
-            total = int(response.headers.get("Content-Length", 0))
-            done = 0
-            while True:
-                chunk = response.read(1024 * 1024)
-                if not chunk:
-                    break
-                out.write(chunk)
-                done += len(chunk)
-                if progress_cb:
-                    percent = min(100, int(done * 100 / total)) if total else None
-                    progress_cb(
-                        "progress",
-                        f"{label}... {percent}%" if percent is not None else f"{label}...",
-                        percent,
-                    )
+    def _download(self, url, target, progress_cb=None, label="Downloading", retries=3):
+        last_error = None
+        for attempt in range(retries):
+            try:
+                req = urllib.request.Request(
+                    url,
+                    headers={
+                        "User-Agent": USER_AGENT,
+                        "Accept": "*/*",
+                        "Accept-Encoding": "identity",
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=120) as response, target.open("wb") as out:
+                    total = int(response.headers.get("Content-Length", 0) or 0)
+                    done = 0
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                        done += len(chunk)
+                        if progress_cb:
+                            percent = min(100, int(done * 100 / total)) if total else None
+                            progress_cb(
+                                "progress",
+                                f"{label}... {percent}%" if percent is not None else f"{label}... {done // (1024 * 1024)} MB",
+                                percent,
+                            )
+                if target.stat().st_size < 1024:
+                    raise RuntimeError("Downloaded file is unexpectedly small.")
+                return
+            except Exception as exc:
+                last_error = exc
+                target.unlink(missing_ok=True)
+                if attempt + 1 < retries:
+                    time.sleep(1.5 * (attempt + 1))
+        raise RuntimeError(f"Download failed after {retries} attempts: {last_error}")
 
     def create_server(self, config, download_url, progress_cb=None):
         folder = (Path(config.folder).expanduser() if config.folder else SERVERS_DIR / config.name).resolve()
@@ -149,8 +186,6 @@ class ServerManager:
                     part = folder / "server.jar.part"
                     try:
                         self._download(download_url, part, progress_cb, f"Downloading {config.loader.title()} {config.version} server.jar")
-                        if part.stat().st_size < 1024:
-                            raise RuntimeError("Downloaded server file is unexpectedly small.")
                         part.replace(jar)
                     finally:
                         part.unlink(missing_ok=True)
@@ -166,32 +201,61 @@ class ServerManager:
                 progress_cb("error", f"Setup failed: {exc}", 0)
             return False
 
-    def _create_bedrock(self, config, folder, url, progress_cb):
-        import zipfile
-
-        exe = folder / "bedrock_server.exe"
-        if not exe.exists():
-            if progress_cb:
-                progress_cb("downloading", "Downloading Bedrock Dedicated Server...", 0)
-            part = folder / "bds.zip.part"
+    def _resolve_bds_url(self, preferred=None):
+        candidates = [preferred, BDS_REDIRECT, BDS_FALLBACK]
+        seen = set()
+        for candidate in candidates:
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
             try:
-                self._download(url or BDS_DOWNLOAD, part, progress_cb, "Downloading Bedrock Dedicated Server")
+                req = urllib.request.Request(candidate, headers={"User-Agent": USER_AGENT, "Accept": "*/*"})
+                with urllib.request.urlopen(req, timeout=30) as response:
+                    final_url = response.geturl()
+                    if final_url.lower().endswith(".zip"):
+                        return final_url
+            except Exception:
+                continue
+        raise RuntimeError("Could not resolve an official Bedrock Dedicated Server download URL.")
+
+    def _create_bedrock(self, config, folder, url, progress_cb):
+        exe_name = "bedrock_server.exe" if os.name == "nt" else "bedrock_server"
+        exe = folder / exe_name
+        if not exe.exists():
+            resolved_url = self._resolve_bds_url(url)
+            if progress_cb:
+                progress_cb("downloading", f"Downloading Bedrock Dedicated Server ({resolved_url.rsplit('/', 1)[-1]})...", 0)
+            part = folder / "bds.zip.part"
+            archive_path = folder / "bds.zip"
+            try:
+                self._download(resolved_url, part, progress_cb, "Downloading Bedrock Dedicated Server")
+                part.replace(archive_path)
                 if progress_cb:
-                    progress_cb("installing", "Extracting Bedrock server files...", 100)
-                with zipfile.ZipFile(part) as archive:
-                    archive.extractall(folder)
+                    progress_cb("installing", "Validating Bedrock archive...", 100)
+                with zipfile.ZipFile(archive_path, "r") as archive:
+                    bad = archive.testzip()
+                    if bad:
+                        raise RuntimeError(f"Bedrock archive is corrupt at {bad}.")
+                    if not any(Path(i.filename).name == exe_name for i in archive.infolist()):
+                        raise RuntimeError(f"Bedrock archive does not contain {exe_name}.")
+                    if progress_cb:
+                        progress_cb("installing", "Extracting Bedrock server files...", 100)
+                    _safe_extract_zip(archive, folder)
             finally:
                 part.unlink(missing_ok=True)
+                archive_path.unlink(missing_ok=True)
         if not exe.exists():
-            raise RuntimeError("bedrock_server.exe was not found after extraction.")
+            raise RuntimeError(f"{exe_name} was not found after extraction.")
+        if os.name != "nt":
+            exe.chmod(exe.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         props = [
-            f"server-name={config.motd}",
+            f"server-name={str(config.motd).replace(';', ' ')}",
             f"gamemode={config.gamemode}",
             f"difficulty={config.difficulty}",
             "allow-cheats=false",
             f"max-players={config.max_players}",
             f"online-mode={str(config.online_mode).lower()}",
-            f"white-list={str(config.whitelist).lower()}",
+            f"allow-list={str(config.whitelist).lower()}",
             f"server-port={config.port}",
             f"server-portv6={config.port + 1}",
             "view-distance=10",
@@ -217,8 +281,6 @@ class ServerManager:
             part = folder / "forge-installer.jar.part"
             try:
                 self._download(url, part, progress_cb, f"Downloading Forge {config.version} installer")
-                if part.stat().st_size < 1024:
-                    raise RuntimeError("Downloaded Forge installer is unexpectedly small.")
                 part.replace(installer)
             finally:
                 part.unlink(missing_ok=True)
@@ -305,9 +367,10 @@ class ServerManager:
         folder = Path(cfg.folder)
         try:
             if cfg.loader == "bedrock":
-                exe = folder / "bedrock_server.exe"
+                exe_name = "bedrock_server.exe" if os.name == "nt" else "bedrock_server"
+                exe = folder / exe_name
                 if not exe.exists():
-                    raise RuntimeError("bedrock_server.exe not found. Recreate the server.")
+                    raise RuntimeError(f"{exe_name} not found. Recreate the server.")
                 cmd = [str(exe)]
             elif cfg.loader == "forge":
                 script = folder / ("run.bat" if os.name == "nt" else "run.sh")
@@ -515,7 +578,7 @@ class ServerManager:
         cfg = self.servers.get(name)
         if not cfg:
             return None
-        return Path(cfg.folder) / ("mods" if cfg.loader in ("fabric", "forge") else "plugins")
+        return Path(cfg.folder) / ("mods" if cfg.loader in ("fabric", "forge", "neoforge") else "plugins")
 
     def list_plugins(self, name):
         directory = self.get_plugins_dir(name)
