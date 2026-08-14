@@ -2,6 +2,7 @@ import json
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
+from pathlib import Path
 
 MANIFEST_URL = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 PAPER_V3 = "https://fill.papermc.io/v3/projects/paper"
@@ -11,6 +12,7 @@ FORGE_MAVEN = "https://files.minecraftforge.net/net/minecraftforge/forge/maven-m
 BDS_LATEST = "https://aka.ms/MinecraftBDS"
 USER_AGENT = "MineHoster/2.0 (https://github.com/viperxc24odmaker/Mine-Hoster)"
 MIN_VERSION = "1.12"
+CACHE_FILE = Path.home() / ".minehoster" / "version_cache.json"
 
 
 def _http_get(url: str) -> dict:
@@ -41,14 +43,12 @@ def _stable_versions(values):
 def fetch_vanilla_versions() -> dict[str, str]:
     data = _http_get(MANIFEST_URL)
     releases = [v for v in data.get("versions", []) if v.get("type") == "release" and _is_at_least(v.get("id", ""), MIN_VERSION)]
-
     def resolve(entry):
         try:
             data = _http_get(entry["url"])
             return entry["id"], data.get("downloads", {}).get("server", {}).get("url")
         except Exception:
             return entry["id"], None
-
     result = {}
     with ThreadPoolExecutor(max_workers=8) as pool:
         for future in as_completed([pool.submit(resolve, entry) for entry in releases]):
@@ -64,7 +64,6 @@ def _paper_v3() -> dict[str, str]:
     for group in project.get("versions", {}).values():
         versions.extend(group)
     versions = _stable_versions(versions)
-
     def resolve(version):
         try:
             builds = _http_get(f"{PAPER_V3}/versions/{version}/builds")
@@ -77,7 +76,6 @@ def _paper_v3() -> dict[str, str]:
         except Exception:
             pass
         return version, None
-
     result = {}
     with ThreadPoolExecutor(max_workers=8) as pool:
         for future in as_completed([pool.submit(resolve, version) for version in versions]):
@@ -154,9 +152,6 @@ def fetch_forge_versions() -> dict[str, str]:
 
 
 def fetch_bedrock_versions() -> dict[str, str]:
-    # The official aka.ms redirect is maintained by Microsoft/Mojang and resolves to
-    # the current stable BDS archive. Keep a known-good historical fallback for
-    # temporary redirect/network failures.
     return {
         "Latest": BDS_LATEST,
         "1.21.51": "https://www.minecraft.net/bedrockdedicatedserver/bin-win/bedrock-server-1.21.51.02.zip",
@@ -171,7 +166,36 @@ def fetch_bedrock_versions() -> dict[str, str]:
     }
 
 
+def _read_disk_cache(loader):
+    try:
+        data = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+        values = data.get(loader)
+        return values if isinstance(values, dict) and values else None
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def _write_disk_cache(loader, values):
+    try:
+        CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            data = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+        data[loader] = values
+        temp = CACHE_FILE.with_suffix(".tmp")
+        temp.write_text(json.dumps(data), encoding="utf-8")
+        temp.replace(CACHE_FILE)
+    except OSError:
+        pass
+
+
 def get_versions_for_loader(loader: str) -> dict[str, str]:
+    # Disk cache makes the version selector instant after the first successful fetch.
+    # The explicit Refresh action clears this cache and fetches fresh metadata next time.
+    cached = _read_disk_cache(loader)
+    if cached:
+        return cached
     fetchers = {
         "vanilla": fetch_vanilla_versions,
         "paper": fetch_paper_versions,
@@ -180,7 +204,10 @@ def get_versions_for_loader(loader: str) -> dict[str, str]:
         "bedrock": fetch_bedrock_versions,
     }
     fetcher = fetchers.get(loader)
-    return fetcher() if fetcher else {}
+    values = fetcher() if fetcher else {}
+    if values:
+        _write_disk_cache(loader, values)
+    return values
 
 
 def clear_cache():
@@ -188,3 +215,7 @@ def clear_cache():
     fetch_paper_versions.cache_clear()
     fetch_fabric_versions.cache_clear()
     fetch_forge_versions.cache_clear()
+    try:
+        CACHE_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
