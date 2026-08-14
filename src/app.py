@@ -1,3 +1,5 @@
+import sys
+from pathlib import Path
 import flet as ft
 
 from src import server_manager as _server_manager
@@ -12,59 +14,49 @@ from src.views.players import PlayersView
 from src.views.plugins import PluginsView
 from src.views.settings import SettingsView
 
-
-# MineHoster owns its server runtime. Prefer a compatible installed Java, then
-# transparently install a private Temurin JRE instead of making users configure JAVA_HOME.
 _server_manager._find_java = ensure_java
 _original_start_server = _server_manager.ServerManager.start_server
 
 
 def _ensure_server_assets(manager, cfg):
-    """Repair/download missing runtime files before a server is launched."""
-    from pathlib import Path
-
     folder = Path(cfg.folder)
     folder.mkdir(parents=True, exist_ok=True)
-
     if cfg.loader == "bedrock":
         if not (folder / "bedrock_server.exe").exists():
-            manager._emit(cfg.name, "[MineHoster] Bedrock server files are missing; downloading them...")
+            manager._emit(cfg.name, "[MineHoster] Bedrock files missing; downloading them...")
             urls = get_versions_for_loader("bedrock")
             url = urls.get(cfg.version) or next(iter(urls.values()), None)
             if not url:
                 raise RuntimeError("No Bedrock server download is available for this version.")
-            manager._create_bedrock(cfg, folder, url, lambda kind, message: manager._emit(cfg.name, f"[Download] {message}"))
-
+            manager._create_bedrock(cfg, folder, url, lambda kind, message, percent=None: manager._emit(cfg.name, f"[Download] {message}"))
     elif cfg.loader == "forge":
         script = folder / ("run.bat" if _server_manager.os.name == "nt" else "run.sh")
         if not script.exists():
-            manager._emit(cfg.name, "[MineHoster] Forge server files are missing; downloading/installing them...")
+            manager._emit(cfg.name, "[MineHoster] Forge files missing; installing them...")
             urls = get_versions_for_loader("forge")
             url = urls.get(cfg.version)
             if not url:
                 raise RuntimeError(f"No Forge installer is available for Minecraft {cfg.version}.")
-            manager._prepare_forge(cfg, folder, url, lambda kind, message: manager._emit(cfg.name, f"[Download] {message}"))
-
+            manager._prepare_forge(cfg, folder, url, lambda kind, message, percent=None: manager._emit(cfg.name, f"[Download] {message}"))
     else:
         jar = folder / "server.jar"
         if not jar.exists() or jar.stat().st_size < 1024:
-            manager._emit(cfg.name, f"[MineHoster] {cfg.loader.title()} server.jar is missing; downloading it...")
+            manager._emit(cfg.name, f"[MineHoster] {cfg.loader.title()} server.jar missing; downloading it...")
             urls = get_versions_for_loader(cfg.loader)
             url = urls.get(cfg.version)
             if not url:
                 raise RuntimeError(f"No {cfg.loader} server download is available for Minecraft {cfg.version}.")
             part = folder / "server.jar.part"
             try:
-                manager._download(url, part, lambda kind, message: manager._emit(cfg.name, f"[Download] {message}"))
+                manager._download(url, part, lambda kind, message, percent=None: manager._emit(cfg.name, f"[Download] {message}"))
                 if part.stat().st_size < 1024:
                     raise RuntimeError("Downloaded server.jar is unexpectedly small.")
                 part.replace(jar)
             finally:
                 part.unlink(missing_ok=True)
-
     if cfg.loader != "bedrock" and not (folder / "eula.txt").exists():
         (folder / "eula.txt").write_text("eula=true\n", encoding="utf-8")
-    if not (folder / "server.properties").exists() and cfg.loader != "bedrock":
+    if cfg.loader != "bedrock" and not (folder / "server.properties").exists():
         manager._write_properties(folder, cfg)
 
 
@@ -101,95 +93,48 @@ class MineHosterApp:
         page.window_height = 780
         page.window_min_width = 980
         page.window_min_height = 640
+        try:
+            root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
+            icon = root / "assets" / "minehoster_build_icon.ico"
+            if icon.exists():
+                page.window.icon = str(icon)
+        except Exception:
+            pass
         page.theme = ft.Theme(font_family="Inter")
-        page.fonts = {
-            "Inter": "https://fonts.gstatic.com/s/inter/v13/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuLyfAZ9hiJ-Ek-_EeA.woff2"
-        }
+        page.fonts = {"Inter": "https://fonts.gstatic.com/s/inter/v13/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuLyfAZ9hiJ-Ek-_EeA.woff2"}
         self._build_layout()
         page.update()
 
     def _build_layout(self):
-        self._main_content = ft.Container(
-            content=DashboardView(self).build(),
-            expand=True,
-            bgcolor=COLORS["bg"],
-        )
-        self.page.add(
-            ft.Row([self._build_sidebar(), self._main_content], spacing=0, expand=True)
-        )
+        self._main_content = ft.Container(content=DashboardView(self).build(), expand=True, bgcolor=COLORS["bg"])
+        self.page.add(ft.Row([self._build_sidebar(), self._main_content], spacing=0, expand=True))
 
     def _build_sidebar(self):
-        logo = ft.Container(
-            content=ft.Row(
-                [
-                    ft.Container(
-                        content=ft.Text("M", color=COLORS["accent"], size=20, weight=ft.FontWeight.BOLD),
-                        bgcolor=COLORS["accent_soft"], border_radius=10,
-                        padding=ft.padding.symmetric(horizontal=10, vertical=7),
-                    ),
-                    ft.Column(
-                        [
-                            ft.Text("MineHoster", color=COLORS["text"], size=16, weight=ft.FontWeight.BOLD),
-                            ft.Text("Minecraft control panel", color=COLORS["muted"], size=9),
-                        ], spacing=1,
-                    ),
-                ], spacing=10,
-            ),
-            padding=ft.padding.only(left=18, right=18, top=20, bottom=18),
-        )
-        items = [
-            ("dashboard", "⌂", "Dashboard"), ("create", "+", "New Server"),
-            ("console", ">", "Console"), ("files", "□", "File Manager"),
-            ("plugins", "◇", "Plugins & Mods"), ("players", "○", "Players"),
-            ("settings", "⚙", "Settings"),
-        ]
+        logo = ft.Container(content=ft.Row([
+            ft.Container(content=ft.Text("M", color=COLORS["accent"], size=20, weight=ft.FontWeight.BOLD), bgcolor=COLORS["accent_soft"], border_radius=10, padding=ft.padding.symmetric(horizontal=10, vertical=7)),
+            ft.Column([ft.Text("MineHoster", color=COLORS["text"], size=16, weight=ft.FontWeight.BOLD), ft.Text("Minecraft control panel", color=COLORS["muted"], size=9)], spacing=1),
+        ], spacing=10), padding=ft.padding.only(left=18, right=18, top=20, bottom=18))
+        items = [("dashboard", "⌂", "Dashboard"), ("create", "+", "New Server"), ("console", ">", "Console"), ("files", "□", "File Manager"), ("plugins", "◇", "Plugins & Mods"), ("players", "○", "Players"), ("settings", "⚙", "Settings")]
         buttons = []
         for key, icon, label in items:
-            button = self._nav_button(key, icon, label)
-            self.nav_refs[key] = button
-            buttons.append(button)
-        return ft.Container(
-            content=ft.Column(
-                [
-                    logo,
-                    ft.Container(height=1, bgcolor=COLORS["border"]),
-                    ft.Container(content=ft.Column(buttons, spacing=4), padding=ft.padding.symmetric(horizontal=10, vertical=14)),
-                    ft.Container(expand=True),
-                    ft.Container(
-                        content=ft.Column(
-                            [ft.Text("MineHoster", color=COLORS["muted"], size=10), ft.Text("Local server manager", color=COLORS["subtext"], size=11)],
-                            spacing=2,
-                        ),
-                        padding=ft.padding.only(left=18, bottom=18),
-                    ),
-                ], spacing=0, expand=True,
-            ),
-            bgcolor=COLORS["surface"], width=232,
-            border=ft.border.only(right=ft.BorderSide(1, COLORS["border"])),
-        )
+            button = self._nav_button(key, icon, label); self.nav_refs[key] = button; buttons.append(button)
+        return ft.Container(content=ft.Column([
+            logo, ft.Container(height=1, bgcolor=COLORS["border"]),
+            ft.Container(content=ft.Column(buttons, spacing=4), padding=ft.padding.symmetric(horizontal=10, vertical=14)),
+            ft.Container(expand=True),
+            ft.Container(content=ft.Column([ft.Text("MineHoster", color=COLORS["muted"], size=10), ft.Text("Local server manager", color=COLORS["subtext"], size=11)], spacing=2), padding=ft.padding.only(left=18, bottom=18)),
+        ], spacing=0, expand=True), bgcolor=COLORS["surface"], width=232, border=ft.border.only(right=ft.BorderSide(1, COLORS["border"])))
 
     def _nav_button(self, key, icon, label):
         active = key == self.current_view
-        return ft.Container(
-            content=ft.Row(
-                [
-                    ft.Text(icon, color=COLORS["accent"] if active else COLORS["muted"], size=16, weight=ft.FontWeight.BOLD),
-                    ft.Text(label, color=COLORS["text"] if active else COLORS["subtext"], size=12),
-                ], spacing=12,
-            ),
-            bgcolor=COLORS["accent_soft"] if active else None,
-            border_radius=9,
-            padding=ft.padding.symmetric(horizontal=12, vertical=11),
-            on_click=lambda e, selected=key: self.navigate(selected),
-            ink=True,
-        )
+        return ft.Container(content=ft.Row([
+            ft.Text(icon, color=COLORS["accent"] if active else COLORS["muted"], size=16, weight=ft.FontWeight.BOLD),
+            ft.Text(label, color=COLORS["text"] if active else COLORS["subtext"], size=12),
+        ], spacing=12), bgcolor=COLORS["accent_soft"] if active else None, border_radius=9, padding=ft.padding.symmetric(horizontal=12, vertical=11), on_click=lambda e, selected=key: self.navigate(selected), ink=True)
 
     def navigate(self, view_key: str):
         self.current_view = view_key
-        views = {
-            "dashboard": DashboardView, "create": CreateServerView, "console": ConsoleView,
-            "files": FileManagerView, "plugins": PluginsView, "players": PlayersView, "settings": SettingsView,
-        }
+        views = {"dashboard": DashboardView, "create": CreateServerView, "console": ConsoleView, "files": FileManagerView, "plugins": PluginsView, "players": PlayersView, "settings": SettingsView}
         self._main_content.content = views.get(view_key, DashboardView)(self).build()
         for key, container in self.nav_refs.items():
             active = key == view_key
