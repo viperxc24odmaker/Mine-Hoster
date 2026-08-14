@@ -45,7 +45,10 @@ class PlayitManager:
         PLAYIT_DIR.mkdir(parents=True, exist_ok=True)
 
     def is_installed(self) -> bool:
-        return PLAYIT_EXE.exists() and PLAYIT_EXE.stat().st_size > 1024
+        try:
+            return PLAYIT_EXE.exists() and PLAYIT_EXE.stat().st_size > 100 * 1024
+        except OSError:
+            return False
 
     def install(self, progress_cb: Optional[Callable] = None) -> bool:
         if self.is_installed():
@@ -69,8 +72,9 @@ class PlayitManager:
                     output.write(chunk)
                     done += len(chunk)
                     if progress_cb and total:
-                        progress_cb("progress", f"Downloading Playit.gg agent... {min(100, int(done * 100 / total))}%", min(100, int(done * 100 / total)))
-            if part.stat().st_size < 1024 * 100:
+                        percent = min(100, int(done * 100 / total))
+                        progress_cb("progress", f"Downloading Playit.gg agent... {percent}%", percent)
+            if part.stat().st_size < 100 * 1024:
                 raise RuntimeError("Playit download was unexpectedly small or incomplete.")
             part.replace(PLAYIT_EXE)
             if os.name != "nt":
@@ -112,12 +116,6 @@ class PlayitManager:
                 self.process = None
 
     def setup(self, setup_code: str = "", callback: Optional[Callable] = None) -> bool:
-        """Run the official `playit setup` flow.
-
-        The official agent handles claim generation/exchange and persistent
-        credentials. If the UI supplies a setup/claim code, it is sent to the
-        interactive setup process instead of inventing a TOML secret format.
-        """
         if not self.is_installed() and not self.install(callback):
             return False
         if self.running:
@@ -128,7 +126,7 @@ class PlayitManager:
         try:
             self._emit("[MineHoster] Starting official Playit setup...")
             process = subprocess.Popen(
-                [str(PLAYIT_EXE), "setup"],
+                [str(PLAYIT_EXE), "-s", "setup"],
                 cwd=str(PLAYIT_DIR),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -151,11 +149,6 @@ class PlayitManager:
             return False
 
     def start(self, port: int = 25565, bedrock: bool = False) -> bool:
-        """Start the official Playit agent using its persisted account config.
-
-        Tunnel creation is intentionally left to the Playit account/agent. The
-        MineHoster UI never writes a guessed playit.toml anymore.
-        """
         if not self.is_installed():
             self._emit("[ERROR] Playit.gg is not installed.")
             return False
@@ -164,7 +157,7 @@ class PlayitManager:
         try:
             self._emit(f"[MineHoster] Starting Playit agent for local port {port} ({'UDP' if bedrock else 'TCP'}).")
             self.process = subprocess.Popen(
-                [str(PLAYIT_EXE)],
+                [str(PLAYIT_EXE), "-s"],
                 cwd=str(PLAYIT_DIR),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -200,10 +193,4 @@ class PlayitManager:
         self.log_callbacks.clear()
 
     def status(self) -> dict:
-        return {
-            "installed": self.is_installed(),
-            "running": self.running,
-            "claim_url": self.claim_url,
-            "tunnel_address": self.tunnel_address,
-            "output": self.setup_output,
-        }
+        return {"installed": self.is_installed(), "running": self.running, "claim_url": self.claim_url, "tunnel_address": self.tunnel_address, "output": self.setup_output}
