@@ -67,26 +67,32 @@ def _start_server_with_auto_setup(self, name):
         self._emit(name, f'[ERROR] Server setup failed: {exc}')
         return False
 
-    # Some Java server distributions can exit immediately on their first
-    # process creation while they finish first-run initialization. Retry once
-    # only when the process actually died; never loop indefinitely.
+    # First-run server startup can occasionally die while the JVM/server files
+    # finish initialization. Retry only once, and only when the child process
+    # actually exits before becoming stable. This avoids making the user press
+    # Start twice while still preventing an endless restart loop.
     for attempt in range(2):
         started = _original_start_server(self, name)
         if not started:
             return False
-        if attempt == 0:
-            deadline = time.monotonic() + 2.0
-            while time.monotonic() < deadline:
+        deadline = time.monotonic() + 8.0
+        while time.monotonic() < deadline:
+            if self.is_running(name):
+                # Give the process a short stability window after Popen. This
+                # catches immediate JVM/loader exits without blocking startup.
+                stable_until = time.monotonic() + 1.5
+                while time.monotonic() < stable_until:
+                    if not self.is_running(name):
+                        break
+                    time.sleep(0.1)
                 if self.is_running(name):
                     return True
-                time.sleep(0.1)
-            if self.is_running(name):
-                return True
-            self._emit(name, '[MineHoster] Server exited during first startup; retrying once...')
+                break
+            time.sleep(0.1)
+        if attempt == 0:
+            self._emit(name, '[MineHoster] Server exited during first startup; retrying once automatically...')
             time.sleep(0.5)
-            continue
-        return self.is_running(name)
-    return False
+    return self.is_running(name)
 
 
 _server_manager.ServerManager.start_server = _start_server_with_auto_setup
@@ -166,39 +172,32 @@ class MineHosterApp:
 
     def _nav_button(self, key, icon, label):
         active = key == self.current_view
-        return ft.Container(
-            content=ft.Row([ft.Text(icon, color=COLORS['accent'] if active else COLORS['muted'], size=16, weight=ft.FontWeight.BOLD), ft.Text(label, color=COLORS['text'] if active else COLORS['subtext'], size=12)], spacing=12),
-            bgcolor=COLORS['accent_soft'] if active else None,
-            border_radius=9,
-            padding=ft.padding.symmetric(horizontal=12, vertical=11),
+        return ft.TextButton(
+            content=ft.Row([
+                ft.Text(icon, color=COLORS['accent'] if active else COLORS['muted'], size=16, weight=ft.FontWeight.BOLD),
+                ft.Text(label, color=COLORS['text'] if active else COLORS['subtext'], size=12),
+            ], spacing=12),
+            style=ft.ButtonStyle(
+                padding=ft.padding.symmetric(horizontal=12, vertical=11),
+                alignment=ft.alignment.center_left,
+                shape=ft.RoundedRectangleBorder(radius=9),
+                bgcolor=COLORS['accent_soft'] if active else None,
+            ),
             on_click=lambda e, selected=key: self.navigate(selected),
-            ink=True,
         )
 
     def _set_nav_state(self, view_key):
         self.current_view = view_key
-        for key, container in self.nav_refs.items():
+        for key, button in self.nav_refs.items():
             active = key == view_key
-            row = container.content
+            row = button.content
             row.controls[0].color = COLORS['accent'] if active else COLORS['muted']
             row.controls[1].color = COLORS['text'] if active else COLORS['subtext']
-            container.bgcolor = COLORS['accent_soft'] if active else None
-
-    def _show_navigation_loading(self, view_key):
-        self._set_nav_state(view_key)
-        self._main_content.content = ft.Container(
-            content=ft.Column([
-                ft.ProgressRing(color=COLORS['accent']),
-                ft.Text('Loading section…', color=COLORS['subtext'], size=12),
-            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, alignment=ft.MainAxisAlignment.CENTER, spacing=12),
-            expand=True,
-        )
-        try:
-            self.page.update()
-        except Exception:
-            pass
+            button.style.bgcolor = COLORS['accent_soft'] if active else None
 
     def navigate(self, view_key):
+        if self._main_content is None:
+            return
         views = {
             'dashboard': DashboardView,
             'bedrock': BedrockView,
@@ -211,30 +210,39 @@ class MineHosterApp:
             'hosting': HostingSettingsView,
         }
         view_cls = views.get(view_key, DashboardView)
-        with self._navigation_lock:
-            self._navigation_token += 1
-            token = self._navigation_token
-        self._show_navigation_loading(view_key)
+        # Navigation is intentionally synchronous. The old background-view
+        # builder made Flet occasionally drop clicks/page updates, forcing
+        # repeated tab clicks. These views are local UI construction only.
+        self._set_nav_state(view_key)
+        self._main_content.content = ft.Container(
+            content=ft.Column([
+                ft.ProgressRing(color=COLORS['accent']),
+                ft.Text('Loading section…', color=COLORS['subtext'], size=12),
+            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, alignment=ft.MainAxisAlignment.CENTER, spacing=12),
+            expand=True,
+        )
+        try:
+            self.page.update()
+        except Exception:
+            pass
+        try:
+            new_content = view_cls(self).build()
+        except Exception as exc:
+            new_content = ft.Container(
+                content=ft.Column([
+                    ft.Text('Could not load this section', size=22, weight=ft.FontWeight.BOLD, color=COLORS['text']),
+                    ft.Text(str(exc), color=COLORS['danger'], selectable=True),
+                    ft.ElevatedButton('Back to Dashboard', bgcolor=COLORS['accent'], color=COLORS['text'], on_click=lambda e: self.navigate('dashboard')),
+                ], spacing=12),
+                padding=32, expand=True,
+            )
+        self._main_content.content = new_content
+        try:
+            self.page.update()
+        except Exception:
+            pass
 
-        def build_view():
-            try:
-                new_content = view_cls(self).build()
-            except Exception as exc:
-                new_content = ft.Container(
-                    content=ft.Column([
-                        ft.Text('Could not load this section', size=22, weight=ft.FontWeight.BOLD, color=COLORS['text']),
-                        ft.Text(str(exc), color=COLORS['danger'], selectable=True),
-                        ft.ElevatedButton('Back to Dashboard', bgcolor=COLORS['accent'], color=COLORS['text'], on_click=lambda e: self.navigate('dashboard')),
-                    ], spacing=12),
-                    padding=32, expand=True,
-                )
-            with self._navigation_lock:
-                if token != self._navigation_token:
-                    return
-            self._main_content.content = new_content
-            try:
-                self.page.update()
-            except Exception:
-                pass
 
-        threading.Thread(target=build_view, daemon=True, name=f'MineHosterNav-{view_key}').start()
+def main(page: ft.Page):
+    app = MineHosterApp(page)
+    app.initialize()
