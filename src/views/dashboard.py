@@ -68,11 +68,7 @@ class DashboardView:
                 ft.Text(str(value), color=accent, size=27, weight=ft.FontWeight.BOLD),
                 ft.Text(subtitle, color=COLORS["subtext"], size=10),
             ], spacing=4),
-            bgcolor=COLORS["card"],
-            border=ft.border.all(1, COLORS["border"]),
-            border_radius=14,
-            padding=16,
-            expand=True,
+            bgcolor=COLORS["card"], border=ft.border.all(1, COLORS["border"]), border_radius=14, padding=16, expand=True,
         )
 
     def _server_card(self, server):
@@ -90,11 +86,7 @@ class DashboardView:
 
         def finish_start(ok):
             self.app.starting_servers.discard(server.name)
-            if ok:
-                # Keep the real process state as the source of truth.
-                refresh_dashboard()
-            else:
-                refresh_dashboard()
+            refresh_dashboard()
 
         def start_worker():
             try:
@@ -112,7 +104,6 @@ class DashboardView:
                 self.sm.stop_server(server.name)
                 refresh_dashboard()
             else:
-                # Set the state and rebuild immediately, before JRE/server setup starts.
                 self.app.starting_servers.add(server.name)
                 self.app.navigate("dashboard")
                 threading.Thread(target=start_worker, daemon=True).start()
@@ -121,36 +112,50 @@ class DashboardView:
             self.app.selected_server = server.name
             self.app.navigate("console")
 
+        def delete(e):
+            if server.name in self.app.starting_servers:
+                return
+            def cancel(ev):
+                dialog.open = False
+                self.app.page.update()
+            def confirm(ev):
+                dialog.open = False
+                self.app.page.update()
+                self.app.starting_servers.discard(server.name)
+                self.sm.delete_server(server.name)
+                if self.app.selected_server == server.name:
+                    self.app.selected_server = None
+                self.app.navigate("dashboard")
+            dialog = ft.AlertDialog(
+                modal=True,
+                title=ft.Text(f"Delete {server.name}?"),
+                content=ft.Text("This permanently deletes the server folder, world and configuration. This cannot be undone."),
+                actions=[
+                    ft.TextButton("Cancel", on_click=cancel),
+                    ft.ElevatedButton("Delete Server", bgcolor=COLORS["danger"], color=COLORS["text"], on_click=confirm),
+                ],
+            )
+            self.app.page.dialog = dialog
+            dialog.open = True
+            self.app.page.update()
+
         return ft.Container(
             content=ft.Row([
                 ft.Column([
                     ft.Row([
                         ft.Text(server.name, color=COLORS["text"], size=14, weight=ft.FontWeight.BOLD),
-                        ft.Container(
-                            content=ft.Text(status, color=accent, size=9, weight=ft.FontWeight.BOLD),
-                            bgcolor=accent + "22",
-                            border_radius=12,
-                            padding=ft.padding.symmetric(horizontal=8, vertical=4),
-                        ),
+                        ft.Container(content=ft.Text(status, color=accent, size=9, weight=ft.FontWeight.BOLD), bgcolor=accent + "22", border_radius=12, padding=ft.padding.symmetric(horizontal=8, vertical=4)),
                     ], spacing=9),
                     ft.Text(f"{server.loader.title()}  •  {server.version}  •  Port {server.port}  •  {server.ram_mb} MB RAM", color=COLORS["subtext"], size=10),
                     ft.ProgressBar(visible=starting, value=None, color=COLORS["accent"], bgcolor=COLORS["surface2"]),
                 ], spacing=7, expand=True),
                 ft.Row([
                     ft.ElevatedButton("Console", bgcolor=COLORS["surface2"], color=COLORS["text"], on_click=console),
-                    ft.ElevatedButton(
-                        "Starting…" if starting else ("Stop" if running else "Start"),
-                        disabled=starting,
-                        bgcolor=COLORS["danger"] if running else COLORS["accent2"],
-                        color=COLORS["text"],
-                        on_click=toggle,
-                    ),
+                    ft.ElevatedButton("Delete", bgcolor=COLORS["danger"], color=COLORS["text"], disabled=starting, on_click=delete),
+                    ft.ElevatedButton("Starting…" if starting else ("Stop" if running else "Start"), disabled=starting, bgcolor=COLORS["danger"] if running else COLORS["accent2"], color=COLORS["text"], on_click=toggle),
                 ], spacing=7),
             ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-            bgcolor=COLORS["card"],
-            border=ft.border.all(1, COLORS["border"]),
-            border_radius=14,
-            padding=17,
+            bgcolor=COLORS["card"], border=ft.border.all(1, COLORS["border"]), border_radius=14, padding=17,
         )
 
     def _empty_state(self):
@@ -161,9 +166,5 @@ class DashboardView:
                 ft.Text("Create a server and MineHoster handles the setup.", color=COLORS["subtext"], size=11),
                 ft.ElevatedButton("Create your first server", bgcolor=COLORS["accent"], color=COLORS["text"], on_click=lambda e: self.app.navigate("create")),
             ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=8),
-            alignment=ft.alignment.center,
-            padding=60,
-            bgcolor=COLORS["card"],
-            border=ft.border.all(1, COLORS["border"]),
-            border_radius=14,
+            alignment=ft.alignment.center, padding=60, bgcolor=COLORS["card"], border=ft.border.all(1, COLORS["border"]), border_radius=14,
         )
