@@ -90,10 +90,18 @@ class MineHosterApp:
         self._build_layout(); MineHosterScheduler.get().start(); page.update()
 
     def _build_layout(self):
-        self._main_content = ft.Container(content=DashboardView(self).build(), expand=True, bgcolor=COLORS['bg']); self.page.add(ft.Row([self._build_sidebar(), self._main_content], spacing=0, expand=True))
+        self._main_content = ft.Container(
+            content=DashboardView(self).build(),
+            expand=True,
+            bgcolor=COLORS['bg'],
+            opacity=1,
+            animate_opacity=ft.Animation(220, ft.AnimationCurve.EASE_OUT),
+            animate_scale=ft.Animation(180, ft.AnimationCurve.EASE_OUT),
+        )
+        self.page.add(ft.Row([self._build_sidebar(), self._main_content], spacing=0, expand=True))
 
     def _build_sidebar(self):
-        logo = ft.Container(content=ft.Row([ft.Container(content=ft.Text('M', color=COLORS['text'], size=19, weight=ft.FontWeight.BOLD), bgcolor=COLORS['accent_soft'], border=ft.border.all(1, COLORS['border']), border_radius=11, padding=ft.padding.symmetric(horizontal=11, vertical=8)), ft.Column([ft.Text('MineHoster', color=COLORS['text'], size=17, weight=ft.FontWeight.BOLD), ft.Text('LOCAL SERVER CONTROL', color=COLORS['muted'], size=8, weight=ft.FontWeight.BOLD)], spacing=1)], spacing=10), padding=ft.padding.only(left=18, right=18, top=20, bottom=18))
+        logo = ft.Container(content=ft.Row([ft.Container(content=ft.Text('M', color=COLORS['text'], size=19, weight=ft.FontWeight.BOLD), bgcolor=COLORS['accent_soft'], border=ft.border.all(1, COLORS['border']), border_radius=11, padding=ft.padding.symmetric(horizontal=11, vertical=8), animate_scale=ft.Animation(160, ft.AnimationCurve.EASE_OUT)), ft.Column([ft.Text('MineHoster', color=COLORS['text'], size=17, weight=ft.FontWeight.BOLD), ft.Text('LOCAL SERVER CONTROL', color=COLORS['muted'], size=8, weight=ft.FontWeight.BOLD)], spacing=1)], spacing=10), padding=ft.padding.only(left=18, right=18, top=20, bottom=18))
         items = [('dashboard', '⌂', 'Overview'), ('create', '+', 'New Server'), ('console', '>', 'Console'), ('players', '○', 'Players'), ('plugins', '◇', 'Plugins & Mods'), ('playit', '↗', 'Playit.gg'), ('files', '□', 'File Manager'), ('bedrock', '◇', 'Bedrock'), ('settings', '⚙', 'Server Settings'), ('hosting', '◈', 'MineHoster Settings')]
         buttons = []
         for key, icon, label in items:
@@ -113,12 +121,20 @@ class MineHosterApp:
         if self._main_content is None: return
         views = {'dashboard': DashboardView, 'bedrock': BedrockView, 'create': CreateServerView, 'console': ConsoleView, 'files': FileManagerView, 'plugins': PluginsView, 'players': PlayersView, 'settings': SettingsView, 'hosting': HostingSettingsView, 'playit': PlayitView}
         view_cls = views.get(view_key, DashboardView); self._set_nav_state(view_key)
-        self._main_content.content = ft.Container(content=ft.Column([ft.ProgressRing(color=COLORS['accent']), ft.Text('Loading section…', color=COLORS['subtext'], size=12)], horizontal_alignment=ft.CrossAxisAlignment.CENTER, alignment=ft.MainAxisAlignment.CENTER, spacing=12), expand=True)
+        with self._navigation_lock:
+            self._navigation_token += 1
+            token = self._navigation_token
+        self._main_content.opacity = 0.15
+        self._main_content.scale = 0.985
         try: self.page.update()
         except Exception: pass
         try: new_content = view_cls(self).build()
         except Exception as exc: new_content = ft.Container(content=ft.Column([ft.Text('Could not load this section', size=22, weight=ft.FontWeight.BOLD, color=COLORS['text']), ft.Text(str(exc), color=COLORS['danger'], selectable=True), ft.ElevatedButton('Back to Overview', bgcolor=COLORS['accent'], color=COLORS['bg'], on_click=lambda e: self.navigate('dashboard'))], spacing=12), padding=32, expand=True)
+        with self._navigation_lock:
+            if token != self._navigation_token: return
         self._main_content.content = new_content
+        self._main_content.opacity = 1
+        self._main_content.scale = 1
         try: self.page.update()
         except Exception: pass
 
