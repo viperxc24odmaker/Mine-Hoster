@@ -12,34 +12,34 @@ on:
 jobs:
   build-windows:
     runs-on: windows-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
-
       - name: Compile Python sources
         run: python -m compileall -q .
-
+      - name: Import smoke test
+        run: >-
+          python -c "import src.app, src.server_manager, src.modrinth, src.playit,
+          src.runtime_scheduler, src.views.settings_v2, src.views.hosting_settings_v2,
+          src.views.players_v2, src.views.playit_tunnel; print('MineHoster imports OK')"
       - name: Build with PyInstaller
         run: pyinstaller minehoster.spec
-
       - name: Verify executable
         shell: powershell
         run: |
           if (-not (Test-Path "dist/MineHoster.exe")) { throw "MineHoster.exe was not produced" }
-          Write-Host "MineHoster.exe built successfully."
-
+          $size = (Get-Item "dist/MineHoster.exe").Length
+          if ($size -lt 1000000) { throw "MineHoster.exe is suspiciously small ($size bytes)" }
+          Write-Host "MineHoster.exe built successfully ($size bytes)."
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
