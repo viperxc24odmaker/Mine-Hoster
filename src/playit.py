@@ -112,15 +112,11 @@ class PlayitManager:
 
     def _emit(self, line: str):
         self.setup_output = (self.setup_output + line + "\n")[-16000:]
-        lower = line.lower()
         match = re.search(r"https?://[^\s]+", line)
         if match:
             url = match.group(0).rstrip(".,)")
             if "playit.gg/claim/" in url or "playit.gg/mc" in url:
                 self.claim_url = url
-        # Playit has emitted several public-address formats over time. Keep the
-        # parser deliberately conservative so normal log URLs are not mistaken
-        # for tunnel endpoints.
         for token in line.split():
             clean = token.strip("[](),:;\"")
             if any(host in clean for host in (".joinmc.link", ".gl.at.ply.gg", ".playit.gg")) and not clean.startswith("https://playit.gg"):
@@ -146,6 +142,8 @@ class PlayitManager:
         if not self.is_installed() and not self.install(callback):
             return False
         if self.running:
+            if setup_code.strip():
+                return self.submit_setup_code(setup_code)
             self._emit("[MineHoster] Playit is already running.")
             return True
         self.claim_url = ""
@@ -156,13 +154,28 @@ class PlayitManager:
             self.process = process
             self.running = True
             threading.Thread(target=self._reader, args=(process,), daemon=True, name="MineHoster-PlayitSetup").start()
-            if setup_code.strip() and process.stdin:
-                process.stdin.write(setup_code.strip() + "\n")
-                process.stdin.flush()
+            if setup_code.strip():
+                return self.submit_setup_code(setup_code)
             return True
         except Exception as exc:
             self._emit(f"[ERROR] Playit setup failed: {exc}")
             self.running = False
+            return False
+
+    def submit_setup_code(self, setup_code: str) -> bool:
+        """Send a one-time Playit setup/claim code to the running setup agent."""
+        code = (setup_code or "").strip()
+        process = self.process
+        if not code or not process or process.poll() is not None or not process.stdin:
+            self._emit("[ERROR] Playit setup is not waiting for a code.")
+            return False
+        try:
+            process.stdin.write(code + "\n")
+            process.stdin.flush()
+            self._emit("[MineHoster] Playit verification code submitted.")
+            return True
+        except (BrokenPipeError, OSError) as exc:
+            self._emit(f"[ERROR] Could not submit Playit code: {exc}")
             return False
 
     def open_claim(self):
@@ -188,7 +201,6 @@ class PlayitManager:
             return True
         try:
             if secret.strip():
-                # Official agent deployments support --secret for headless setup.
                 cmd = [str(PLAYIT_EXE), "--stdout", "--secret", secret.strip()]
             else:
                 cmd = [str(PLAYIT_EXE), "-s"]
