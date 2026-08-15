@@ -16,6 +16,7 @@ from src.views.players import PlayersView
 from src.views.plugins import PluginsView
 from src.views.settings import SettingsView
 from src.views.hosting_settings import HostingSettingsView
+from src.views.playit import PlayitView
 
 _server_manager._find_java = ensure_java
 _original_start_server = _server_manager.ServerManager.start_server
@@ -66,11 +67,6 @@ def _start_server_with_auto_setup(self, name):
     except Exception as exc:
         self._emit(name, f'[ERROR] Server setup failed: {exc}')
         return False
-
-    # First-run server startup can occasionally die while the JVM/server files
-    # finish initialization. Retry only once, and only when the child process
-    # actually exits before becoming stable. This avoids making the user press
-    # Start twice while still preventing an endless restart loop.
     for attempt in range(2):
         started = _original_start_server(self, name)
         if not started:
@@ -78,8 +74,6 @@ def _start_server_with_auto_setup(self, name):
         deadline = time.monotonic() + 8.0
         while time.monotonic() < deadline:
             if self.is_running(name):
-                # Give the process a short stability window after Popen. This
-                # catches immediate JVM/loader exits without blocking startup.
                 stable_until = time.monotonic() + 1.5
                 while time.monotonic() < stable_until:
                     if not self.is_running(name):
@@ -115,10 +109,10 @@ class MineHosterApp:
         page.bgcolor = COLORS['bg']
         page.padding = 0
         page.spacing = 0
-        page.window_width = 1240
-        page.window_height = 780
-        page.window_min_width = 980
-        page.window_min_height = 640
+        page.window_width = 1320
+        page.window_height = 820
+        page.window_min_width = 1000
+        page.window_min_height = 660
         try:
             root = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[1]))
             icon = root / 'assets' / 'minehoster_build_icon.ico'
@@ -126,7 +120,7 @@ class MineHosterApp:
                 page.window.icon = str(icon)
         except Exception:
             pass
-        page.theme = ft.Theme(font_family='Inter')
+        page.theme = ft.Theme(font_family='Inter', visual_density=ft.VisualDensity.COMFORTABLE)
         page.fonts = {'Inter': 'https://fonts.gstatic.com/s/inter/v13/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuLyfAZ9hiJ-Ek-_EeA.woff2'}
         self._build_layout()
         page.update()
@@ -138,21 +132,22 @@ class MineHosterApp:
     def _build_sidebar(self):
         logo = ft.Container(
             content=ft.Row([
-                ft.Container(content=ft.Text('M', color=COLORS['accent'], size=20, weight=ft.FontWeight.BOLD), bgcolor=COLORS['accent_soft'], border_radius=10, padding=ft.padding.symmetric(horizontal=10, vertical=7)),
-                ft.Column([ft.Text('MineHoster', color=COLORS['text'], size=16, weight=ft.FontWeight.BOLD), ft.Text('Minecraft control panel', color=COLORS['muted'], size=9)], spacing=1),
+                ft.Container(content=ft.Text('M', color=COLORS['text'], size=19, weight=ft.FontWeight.BOLD), bgcolor=COLORS['accent_soft'], border=ft.border.all(1, COLORS['border']), border_radius=11, padding=ft.padding.symmetric(horizontal=11, vertical=8)),
+                ft.Column([ft.Text('MineHoster', color=COLORS['text'], size=17, weight=ft.FontWeight.BOLD), ft.Text('LOCAL SERVER CONTROL', color=COLORS['muted'], size=8, weight=ft.FontWeight.BOLD)], spacing=1),
             ], spacing=10),
             padding=ft.padding.only(left=18, right=18, top=20, bottom=18),
         )
         items = [
-            ('dashboard', '⌂', 'Dashboard'),
-            ('bedrock', '◇', 'Bedrock'),
+            ('dashboard', '⌂', 'Overview'),
             ('create', '+', 'New Server'),
             ('console', '>', 'Console'),
-            ('files', '□', 'File Manager'),
-            ('plugins', '◇', 'Plugins & Mods'),
             ('players', '○', 'Players'),
-            ('settings', '⚙', 'Settings'),
-            ('hosting', '◈', 'Hosting Settings'),
+            ('plugins', '◇', 'Plugins & Mods'),
+            ('playit', '↗', 'Playit.gg'),
+            ('files', '□', 'File Manager'),
+            ('bedrock', '◇', 'Bedrock'),
+            ('settings', '⚙', 'Server Settings'),
+            ('hosting', '◈', 'MineHoster Settings'),
         ]
         buttons = []
         for key, icon, label in items:
@@ -163,26 +158,21 @@ class MineHosterApp:
             content=ft.Column([
                 logo,
                 ft.Container(height=1, bgcolor=COLORS['border']),
-                ft.Container(content=ft.Column(buttons, spacing=4), padding=ft.padding.symmetric(horizontal=10, vertical=14)),
+                ft.Container(content=ft.Column(buttons, spacing=3), padding=ft.padding.symmetric(horizontal=9, vertical=13)),
                 ft.Container(expand=True),
-                ft.Container(content=ft.Column([ft.Text('MineHoster', color=COLORS['muted'], size=10), ft.Text('Local server manager', color=COLORS['subtext'], size=11)], spacing=2), padding=ft.padding.only(left=18, bottom=18)),
+                ft.Container(content=ft.Column([ft.Text('MINEHOSTER', color=COLORS['muted'], size=9, weight=ft.FontWeight.BOLD), ft.Text('Graphite • Local-first • No cloud required', color=COLORS['subtext'], size=10)], spacing=2), padding=ft.padding.only(left=18, bottom=18)),
             ], spacing=0, expand=True),
-            bgcolor=COLORS['surface'], width=232, border=ft.border.only(right=ft.BorderSide(1, COLORS['border'])),
+            bgcolor=COLORS['surface'], width=238, border=ft.border.only(right=ft.BorderSide(1, COLORS['border'])),
         )
 
     def _nav_button(self, key, icon, label):
         active = key == self.current_view
         return ft.TextButton(
             content=ft.Row([
-                ft.Text(icon, color=COLORS['accent'] if active else COLORS['muted'], size=16, weight=ft.FontWeight.BOLD),
-                ft.Text(label, color=COLORS['text'] if active else COLORS['subtext'], size=12),
+                ft.Text(icon, color=COLORS['text'] if active else COLORS['muted'], size=16, weight=ft.FontWeight.BOLD),
+                ft.Text(label, color=COLORS['text'] if active else COLORS['subtext'], size=12, weight=ft.FontWeight.W_500),
             ], spacing=12),
-            style=ft.ButtonStyle(
-                padding=ft.padding.symmetric(horizontal=12, vertical=11),
-                alignment=ft.alignment.center_left,
-                shape=ft.RoundedRectangleBorder(radius=9),
-                bgcolor=COLORS['accent_soft'] if active else None,
-            ),
+            style=ft.ButtonStyle(padding=ft.padding.symmetric(horizontal=12, vertical=11), alignment=ft.alignment.center_left, shape=ft.RoundedRectangleBorder(radius=9), bgcolor=COLORS['accent_soft'] if active else None),
             on_click=lambda e, selected=key: self.navigate(selected),
         )
 
@@ -191,7 +181,7 @@ class MineHosterApp:
         for key, button in self.nav_refs.items():
             active = key == view_key
             row = button.content
-            row.controls[0].color = COLORS['accent'] if active else COLORS['muted']
+            row.controls[0].color = COLORS['text'] if active else COLORS['muted']
             row.controls[1].color = COLORS['text'] if active else COLORS['subtext']
             button.style.bgcolor = COLORS['accent_soft'] if active else None
 
@@ -208,19 +198,11 @@ class MineHosterApp:
             'players': PlayersView,
             'settings': SettingsView,
             'hosting': HostingSettingsView,
+            'playit': PlayitView,
         }
         view_cls = views.get(view_key, DashboardView)
-        # Navigation is intentionally synchronous. The old background-view
-        # builder made Flet occasionally drop clicks/page updates, forcing
-        # repeated tab clicks. These views are local UI construction only.
         self._set_nav_state(view_key)
-        self._main_content.content = ft.Container(
-            content=ft.Column([
-                ft.ProgressRing(color=COLORS['accent']),
-                ft.Text('Loading section…', color=COLORS['subtext'], size=12),
-            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, alignment=ft.MainAxisAlignment.CENTER, spacing=12),
-            expand=True,
-        )
+        self._main_content.content = ft.Container(content=ft.Column([ft.ProgressRing(color=COLORS['accent']), ft.Text('Loading section…', color=COLORS['subtext'], size=12)], horizontal_alignment=ft.CrossAxisAlignment.CENTER, alignment=ft.MainAxisAlignment.CENTER, spacing=12), expand=True)
         try:
             self.page.update()
         except Exception:
@@ -228,14 +210,7 @@ class MineHosterApp:
         try:
             new_content = view_cls(self).build()
         except Exception as exc:
-            new_content = ft.Container(
-                content=ft.Column([
-                    ft.Text('Could not load this section', size=22, weight=ft.FontWeight.BOLD, color=COLORS['text']),
-                    ft.Text(str(exc), color=COLORS['danger'], selectable=True),
-                    ft.ElevatedButton('Back to Dashboard', bgcolor=COLORS['accent'], color=COLORS['text'], on_click=lambda e: self.navigate('dashboard')),
-                ], spacing=12),
-                padding=32, expand=True,
-            )
+            new_content = ft.Container(content=ft.Column([ft.Text('Could not load this section', size=22, weight=ft.FontWeight.BOLD, color=COLORS['text']), ft.Text(str(exc), color=COLORS['danger'], selectable=True), ft.ElevatedButton('Back to Overview', bgcolor=COLORS['accent'], color=COLORS['bg'], on_click=lambda e: self.navigate('dashboard'))], spacing=12), padding=32, expand=True)
         self._main_content.content = new_content
         try:
             self.page.update()
