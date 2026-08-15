@@ -2,6 +2,7 @@ import threading
 from pathlib import Path
 import flet as ft
 from src.server_manager import ServerConfig, ServerManager
+from src.server_icons import ICON_CHOICES, DEFAULT_ICON, set_icon
 from src.theme import COLORS
 from src.version_fetcher import get_versions_for_loader
 
@@ -9,20 +10,29 @@ class CreateServerView:
     LOADERS = ["vanilla", "paper", "fabric", "forge", "bedrock"]
     ICONS = {"vanilla": "V", "paper": "P", "fabric": "F", "forge": "⚒", "bedrock": "B"}
     def __init__(self, app):
-        self.app = app; self.sm = ServerManager.get(); self.versions_cache = {}; self.selected_loader = "paper"; self.selected_version = ""; self.download_url = ""; self.loader_buttons = []
+        self.app = app; self.sm = ServerManager.get(); self.versions_cache = {}; self.selected_loader = "paper"; self.selected_version = ""; self.download_url = ""; self.loader_buttons = []; self.selected_icon = DEFAULT_ICON
         style = {"border_color": COLORS["border"], "focused_border_color": COLORS["accent"], "label_style": ft.TextStyle(color=COLORS["subtext"]), "color": COLORS["text"], "bgcolor": COLORS["surface2"]}
         self.name_field = ft.TextField(label="Server name", hint_text="My Server", **style)
         self.port_field = ft.TextField(label="Port", value="25565", width=150, **style); self.ram_field = ft.TextField(label="RAM (MB)", value="2048", width=150, **style); self.max_players_field = ft.TextField(label="Max players", value="20", width=150, **style)
         self.folder_field = ft.TextField(label="Server folder (optional)", hint_text=str(Path.home() / ".minehoster" / "servers" / "MyServer"), expand=True, **style); self.motd_field = ft.TextField(label="MOTD", value="A MineHoster Server", **style)
         self.online_mode = ft.Switch(label="Online mode", value=True, active_color=COLORS["accent"]); self.command_blocks = ft.Switch(label="Command blocks", value=False, active_color=COLORS["accent"]); self.pvp = ft.Switch(label="PvP", value=True, active_color=COLORS["accent"]); self.whitelist = ft.Switch(label="Whitelist", value=False, active_color=COLORS["accent"])
         self.difficulty_dd = ft.Dropdown(label="Difficulty", value="normal", options=[ft.dropdown.Option(v) for v in ["peaceful", "easy", "normal", "hard"]], width=180, **style); self.gamemode_dd = ft.Dropdown(label="Gamemode", value="survival", options=[ft.dropdown.Option(v) for v in ["survival", "creative", "adventure", "spectator"]], width=180, **style)
-        self.version_dd = ft.Dropdown(label="Minecraft version", options=[ft.dropdown.Option("Loading...")], on_change=self._on_version_change, **style)
+        self.version_dd = ft.Dropdown(label="Minecraft version", options=[ft.dropdown.Option("Loading...")], on_change=self._on_version_change, **style); self.icon_buttons = []
         self.status_text = ft.Text("", color=COLORS["subtext"], size=11); self.download_file = ft.Text("", color=COLORS["muted"], size=11); self.progress = ft.ProgressBar(visible=False, value=0, color=COLORS["accent"], bgcolor=COLORS["surface2"]); self.create_btn = ft.ElevatedButton("Create server", bgcolor=COLORS["accent"], color=COLORS["text"], on_click=self._create, width=170)
     def build(self):
-        self.loader_buttons = [self._loader_btn(loader) for loader in self.LOADERS]; self._load_versions_async(self.selected_loader)
-        return ft.Container(content=ft.Column([ft.Text("New server", color=COLORS["text"], size=24, weight=ft.FontWeight.BOLD), ft.Text("Pick the server software, version and resources. MineHoster handles the setup.", color=COLORS["subtext"], size=12), ft.Container(height=12), self._section("SERVER DETAILS"), ft.Row([self.name_field, self.folder_field], spacing=10), ft.Row([self.port_field, self.max_players_field, self.ram_field], spacing=10), self.motd_field, ft.Container(height=5), self._section("SOFTWARE"), ft.Row(self.loader_buttons, spacing=7), ft.Row([self.version_dd, ft.ElevatedButton("Refresh", bgcolor=COLORS["surface2"], color=COLORS["text"], on_click=lambda e: self._load_versions_async(self.selected_loader))], spacing=8), ft.Container(height=5), self._section("GAMEPLAY"), ft.Row([self.online_mode, self.command_blocks, self.pvp, self.whitelist], spacing=18), ft.Row([self.difficulty_dd, self.gamemode_dd], spacing=10), ft.Container(height=8), self.download_file, self.progress, self.status_text, self.create_btn], spacing=9, scroll=ft.ScrollMode.AUTO, expand=True), padding=30, expand=True)
+        self.loader_buttons = [self._loader_btn(loader) for loader in self.LOADERS]; self.icon_buttons = [self._icon_btn(key, emoji) for key, emoji in ICON_CHOICES.items()]; self._load_versions_async(self.selected_loader)
+        return ft.Container(content=ft.Column([ft.Text("New server", color=COLORS["text"], size=24, weight=ft.FontWeight.BOLD), ft.Text("Pick the server software, version, resources and an optional server icon.", color=COLORS["subtext"], size=12), ft.Container(height=12), self._section("SERVER DETAILS"), ft.Row([self.name_field, self.folder_field], spacing=10), ft.Row([self.port_field, self.max_players_field, self.ram_field], spacing=10), self.motd_field, ft.Container(height=5), self._section("SERVER ICON  •  OPTIONAL"), ft.Text("Choose an icon for this server card.", color=COLORS["muted"], size=10), ft.Row(self.icon_buttons, spacing=6, wrap=True), ft.Container(height=5), self._section("SOFTWARE"), ft.Row(self.loader_buttons, spacing=7), ft.Row([self.version_dd, ft.ElevatedButton("Refresh", bgcolor=COLORS["surface2"], color=COLORS["text"], on_click=lambda e: self._load_versions_async(self.selected_loader))], spacing=8), ft.Container(height=5), self._section("GAMEPLAY"), ft.Row([self.online_mode, self.command_blocks, self.pvp, self.whitelist], spacing=18), ft.Row([self.difficulty_dd, self.gamemode_dd], spacing=10), ft.Container(height=8), self.download_file, self.progress, self.status_text, self.create_btn], spacing=9, scroll=ft.ScrollMode.AUTO, expand=True), padding=30, expand=True)
     def _section(self, title): return ft.Text(title, color=COLORS["muted"], size=10, weight=ft.FontWeight.BOLD)
     def _loader_btn(self, loader): return ft.ElevatedButton(f"{self.ICONS[loader]}  {loader.capitalize()}", bgcolor=COLORS["accent"] if loader == self.selected_loader else COLORS["surface2"], color=COLORS["text"], on_click=lambda e, value=loader: self._select_loader(value))
+    def _icon_btn(self, key, emoji):
+        selected = key == self.selected_icon
+        return ft.Container(content=ft.Text(emoji, size=20), width=43, height=43, alignment=ft.alignment.center, bgcolor=COLORS["accent_soft"] if selected else COLORS["surface2"], border=ft.border.all(2 if selected else 1, COLORS["accent"] if selected else COLORS["border"]), border_radius=10, on_click=lambda e, value=key: self._select_icon(value), tooltip=key.replace("_", " ").title())
+    def _select_icon(self, key):
+        self.selected_icon = key
+        for button, value in zip(self.icon_buttons, ICON_CHOICES):
+            button.bgcolor = COLORS["accent_soft"] if value == key else COLORS["surface2"]; button.border = ft.border.all(2 if value == key else 1, COLORS["accent"] if value == key else COLORS["border"])
+            try: button.update()
+            except Exception: pass
     def _select_loader(self, loader):
         self.selected_loader = loader; self.selected_version = ""; self.download_url = ""
         for button, value in zip(self.loader_buttons, self.LOADERS): button.bgcolor = COLORS["accent"] if value == loader else COLORS["surface2"]
@@ -34,7 +44,7 @@ class CreateServerView:
             if loader not in self.versions_cache: self.versions_cache[loader] = get_versions_for_loader(loader)
             versions = self.versions_cache[loader]; options = [ft.dropdown.Option(version) for version in versions]
             if options:
-                self.version_dd.options = options; self.version_dd.value = options[0].key; self.selected_version = options[0].key; self.download_url = versions[self.selected_version]; self.status_text.value = f"{len(options)} versions available"
+                self.version_dd.options = options; self.version_dd.value = options[0].key; self.selected_version = options[0].key; self.download_url = versions[self.selected_version]; self.status_text.value = f"{len(options)} versions available"; self.status_text.color = COLORS["subtext"]
             else:
                 self.version_dd.options = [ft.dropdown.Option("No versions found")]; self.version_dd.value = None; self.selected_version = ""; self.download_url = ""; self.status_text.value = f"Could not load {loader.title()} versions."; self.status_text.color = COLORS["danger"]
         except Exception as exc:
@@ -61,7 +71,7 @@ class CreateServerView:
             self._safe_update()
         ok = self.sm.create_server(config, self.download_url, progress); self.progress.visible = False; self.create_btn.disabled = False
         if ok:
-            self.status_text.value = "Server created. Opening dashboard..."; self.status_text.color = COLORS["accent2"]; self._safe_update(); self.app.navigate("dashboard")
+            set_icon(config.name, self.selected_icon); self.status_text.value = "Server created. Opening dashboard..."; self.status_text.color = COLORS["accent2"]; self._safe_update(); self.app.navigate("dashboard")
         else: self._safe_update()
     def _error(self, message): self.status_text.value = f"✕ {message}"; self.status_text.color = COLORS["danger"]; self._safe_update()
     def _safe_update(self):
