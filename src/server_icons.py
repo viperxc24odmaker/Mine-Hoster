@@ -2,9 +2,10 @@ import json
 from pathlib import Path
 
 ICONS_FILE = Path.home() / ".minehoster" / "server_icons.json"
-DEFAULT_ICON = "grass"
+DEFAULT_ICON = "none"
 
 ICON_CHOICES = {
+    "none": "✕",
     "grass": "🌱",
     "diamond": "💎",
     "sword": "⚔️",
