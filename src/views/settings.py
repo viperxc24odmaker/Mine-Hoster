@@ -1,145 +1,85 @@
+import json
 import random
 import shutil
 import threading
 from pathlib import Path
-
 import flet as ft
-
-from src.server_manager import ServerManager
+from src.server_manager import ServerManager, SERVERS_FILE
 from src.version_fetcher import clear_cache
 from src.java_runtime import download_java, installed_jres
-from src.playit import PlayitManager
-from src.theme import COLORS
+from src.theme import COLORS, ACCENT_PRESETS
+
+PREFS_FILE = SERVERS_FILE.parent / "preferences.json"
 
 
 class SettingsView:
     def __init__(self, app):
         self.app = app
         self.sm = ServerManager.get()
-        self.playit = PlayitManager.get()
-        self.selected = app.selected_server or (self.sm.get_servers()[0].name if self.sm.get_servers() else None)
-        style = dict(border_color=COLORS["border"], focused_border_color=COLORS["accent"], label_style=ft.TextStyle(color=COLORS["subtext"]), color=COLORS["text"], bgcolor=COLORS["surface2"])
-        self.props_col = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO)
+        servers = self.sm.get_servers()
+        self.selected = app.selected_server or (servers[0].name if servers else None)
         self.status_text = ft.Text("", color=COLORS["subtext"], size=12)
+        self.props_col = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO)
         self.prop_fields = {}
         self.jre_status = ft.Text("", color=COLORS["subtext"], size=12)
-        self.jre_progress = ft.ProgressBar(value=0, visible=False, color=COLORS["accent"], bgcolor=COLORS["surface2"])
-        self.playit_code = ft.TextField(label="Playit setup / claim code", hint_text="Paste the code from playit.gg", expand=True, **style)
-        self.playit_status = ft.Text("", color=COLORS["subtext"], size=12)
-        self.playit_progress = ft.ProgressBar(value=0, visible=False, color=COLORS["accent"], bgcolor=COLORS["surface2"])
-        self.playit_address = ft.Text("", color=COLORS["accent2"], size=12, selectable=True)
-        self.seed_field = ft.TextField(label="World seed", hint_text="Blank = random/default", expand=True, **style)
+        self.jre_progress = ft.ProgressBar(value=0, visible=False, color=COLORS["accent"])
         self.world_status = ft.Text("", color=COLORS["subtext"], size=12)
+        self.appearance_status = ft.Text("", color=COLORS["subtext"], size=12)
 
-    def build(self):
-        servers = self.sm.get_servers()
-        if servers:
-            server_inner = [
-                ft.Dropdown(value=self.selected, options=[ft.dropdown.Option(s.name) for s in servers], on_change=self._on_server_change, border_color=COLORS["border"], focused_border_color=COLORS["accent"], color=COLORS["text"], bgcolor=COLORS["surface2"], width=220),
-                ft.Container(height=8), self.props_col, ft.Container(height=8),
-                ft.Row([ft.ElevatedButton("Save Properties", bgcolor=COLORS["accent2"], color=COLORS["text"], on_click=self._save_props), self.status_text], spacing=12),
-            ]
-        else:
-            server_inner = [ft.Text("No servers found.", color=COLORS["subtext"], size=13)]
+    def _prefs(self):
+        try:
+            data = json.loads(PREFS_FILE.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
 
-        server_section = self._card("Server Properties", "Edit server.properties for the selected server", server_inner)
-        jre_buttons = [ft.ElevatedButton(f"Download JRE {version}", bgcolor=COLORS["surface2"], color=COLORS["text"], on_click=lambda e, v=version: self._download_jre(v)) for version in (17, 21, 25)]
-        jre_section = self._card("Java / JRE Download Manager", "Private Eclipse Temurin runtimes are reused automatically when already installed.", [ft.Row(jre_buttons, spacing=8), self.jre_progress, self.jre_status, self._installed_jres_text()])
-
-        playit_section = self._card("Playit.gg Tunnel", "MineHoster now uses the official Playit agent setup instead of generating an invalid custom TOML config.", [
-            ft.Row([
-                ft.ElevatedButton("Install / Update Agent", bgcolor=COLORS["surface2"], color=COLORS["text"], on_click=self._install_playit),
-                ft.ElevatedButton("Start Agent", bgcolor=COLORS["accent2"], color=COLORS["text"], on_click=self._start_playit),
-                ft.ElevatedButton("Stop Agent", bgcolor=COLORS["danger"], color=COLORS["text"], on_click=self._stop_playit),
-            ], spacing=8, wrap=True),
-            ft.Row([self.playit_code, ft.ElevatedButton("Setup", bgcolor=COLORS["accent"], color=COLORS["text"], on_click=self._setup_playit)], spacing=8),
-            self.playit_progress, self.playit_status, self.playit_address,
-            ft.Text("After setup, claim the agent at the URL shown by Playit, then create a Minecraft Java/Bedrock tunnel in your Playit account. MineHoster reuses the installed agent and its credentials.", color=COLORS["muted"], size=11),
-        ])
-
-        world_section = self._card("World Management", "Generate a seed or completely reset the selected server's world.", [
-            ft.Row([self.seed_field, ft.ElevatedButton("Generate Seed", bgcolor=COLORS["surface2"], color=COLORS["text"], on_click=self._generate_seed), ft.ElevatedButton("Apply Seed", bgcolor=COLORS["accent2"], color=COLORS["text"], on_click=self._apply_seed)], spacing=8, wrap=True),
-            ft.Row([ft.ElevatedButton("Reset World", bgcolor=COLORS["danger"], color=COLORS["text"], on_click=self._reset_world), self.world_status], spacing=10),
-        ])
-
-        app_section = self._card("Application", "Maintenance and destructive server actions.", [
-            ft.Row([ft.ElevatedButton("Refresh Version Cache", bgcolor=COLORS["surface2"], color=COLORS["text"], on_click=self._clear_cache), ft.Text("Re-fetch Minecraft/Paper/Fabric version lists.", color=COLORS["subtext"], size=12)], spacing=12),
-            ft.Row([ft.ElevatedButton("Delete Selected Server", bgcolor=COLORS["danger"], color=COLORS["text"], on_click=self._delete_server), ft.Text("Permanently deletes the server and all files.", color=COLORS["danger"], size=12)], spacing=12),
-        ])
-
-        if self.selected:
-            self._load_props()
-            self._load_seed()
-
-        return ft.Container(content=ft.Column([
-            ft.Text("Settings", size=24, weight=ft.FontWeight.BOLD, color=COLORS["text"]),
-            ft.Text("Configure servers, Java runtimes, Playit tunnels and worlds.", color=COLORS["subtext"], size=13),
-            ft.Container(height=16), server_section, ft.Container(height=16), jre_section, ft.Container(height=16), playit_section, ft.Container(height=16), world_section, ft.Container(height=16), app_section,
-        ], scroll=ft.ScrollMode.AUTO), padding=32, expand=True)
+    def _save_prefs(self, data):
+        PREFS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = PREFS_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        tmp.replace(PREFS_FILE)
 
     def _card(self, title, subtitle, controls):
-        return ft.Container(content=ft.Column([ft.Text(title, size=16, weight=ft.FontWeight.W_600, color=COLORS["text"]), ft.Text(subtitle, color=COLORS["subtext"], size=12), ft.Container(height=8)] + controls), bgcolor=COLORS["card"], border_radius=12, padding=20, border=ft.border.all(1, COLORS["border"]))
+        return ft.Container(content=ft.Column([ft.Text(title, size=16, weight=ft.FontWeight.W_600, color=COLORS["text"]), ft.Text(subtitle, color=COLORS["subtext"], size=12), ft.Container(height=8), *controls], spacing=8), bgcolor=COLORS["card"], border_radius=12, padding=20, border=ft.border.all(1, COLORS["border"]))
 
-    def _installed_jres_text(self):
-        installed = installed_jres()
-        text = ", ".join(f"Java {version}" for version, _, _ in installed) if installed else "No private JREs downloaded yet."
-        return ft.Text(f"Installed private runtimes: {text}", color=COLORS["muted"], size=11)
+    def build(self):
+        prefs = self._prefs()
+        accent = prefs.get("accent", "Graphite") if prefs.get("accent", "Graphite") in ACCENT_PRESETS else "Graphite"
+        mode = prefs.get("mode", "dark")
+        accent_dd = ft.Dropdown(label="Accent", value=accent, options=[ft.dropdown.Option(k) for k in ACCENT_PRESETS], width=180)
+        mode_dd = ft.Dropdown(label="Appearance", value=mode, options=[ft.dropdown.Option("dark"), ft.dropdown.Option("light"), ft.dropdown.Option("system")], width=180)
+        servers = self.sm.get_servers()
+        if servers:
+            server_dd = ft.Dropdown(label="Server", value=self.selected, options=[ft.dropdown.Option(s.name) for s in servers], on_change=self._on_server_change, width=220, color=COLORS["text"], bgcolor=COLORS["surface2"], border_color=COLORS["border"])
+            self._load_props()
+            server_controls = [server_dd, self.props_col, ft.Row([ft.ElevatedButton("Save Server Properties", bgcolor=COLORS["accent"], color=COLORS["bg"], on_click=self._save_props), self.status_text], spacing=12)]
+        else:
+            server_controls = [ft.Text("No servers found. Create one from New Server.", color=COLORS["subtext"])]
 
-    def _download_jre(self, version):
-        self.jre_progress.visible = True; self.jre_progress.value = 0; self.jre_status.value = f"Preparing JRE {version}..."; self._safe_update()
-        def worker():
-            def progress(stage, message, percent=None):
-                self.jre_status.value = message
-                if percent is not None: self.jre_progress.value = percent / 100
-                self._safe_update()
-            try:
-                download_java(version, progress); self.jre_progress.value = 1; self.jre_status.color = COLORS["accent2"]; self.jre_status.value = f"✓ JRE {version} is ready and will be reused."
-            except Exception as exc:
-                self.jre_status.color = COLORS["danger"]; self.jre_status.value = f"✕ JRE {version} failed: {exc}"
-            finally:
-                self.jre_progress.visible = False; self._safe_update()
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _install_playit(self, e):
-        self.playit_progress.visible = True; self.playit_progress.value = 0; self.playit_status.value = "Downloading/checking Playit agent..."; self._safe_update()
-        def worker():
-            def progress(stage, message, percent=0):
-                self.playit_status.value = message
-                if percent is not None: self.playit_progress.value = percent / 100
-                self._safe_update()
-            ok = self.playit.install(progress)
-            self.playit_status.color = COLORS["accent2"] if ok else COLORS["danger"]
-            self.playit_status.value = "✓ Playit agent ready." if ok else "✕ Playit agent installation failed."
-            self.playit_progress.visible = False; self._safe_update()
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _setup_playit(self, e):
-        self.playit_status.value = "Starting official Playit setup..."; self.playit_status.color = COLORS["subtext"]; self._safe_update()
-        code = (self.playit_code.value or "").strip()
-        def worker():
-            self.playit.register_callback(self._playit_log)
-            ok = self.playit.setup(code)
-            self.playit_status.value = "✓ Setup process started. Follow the Playit claim/setup page shown below." if ok else "✕ Could not start Playit setup."
+        def save_appearance(e):
+            chosen = accent_dd.value or "Graphite"
+            if chosen not in ACCENT_PRESETS: chosen = "Graphite"
+            base, soft = ACCENT_PRESETS[chosen]
+            COLORS["accent"] = base; COLORS["accent_soft"] = soft
+            COLORS["accent2_soft"] = COLORS["accent2"] + "1C"
+            selected_mode = mode_dd.value or "dark"
+            if selected_mode == "light":
+                COLORS.update({"bg": "#F3F5F7", "surface": "#FFFFFF", "surface2": "#EEF1F4", "card": "#FFFFFF", "border": "#D8DEE6", "text": "#151A21", "subtext": "#5D6673", "muted": "#7A8491"})
+            else:
+                COLORS.update({"bg": "#090B0F", "surface": "#101319", "surface2": "#171B22", "card": "#13171E", "border": "#2A303A", "text": "#F4F6F8", "subtext": "#A0A8B5", "muted": "#68717E"})
+            self._save_prefs({"accent": chosen, "mode": selected_mode})
+            self.app.page.bgcolor = COLORS["bg"]
+            self.appearance_status.value = "✓ Appearance saved. MineHoster will refresh the interface."
+            self.appearance_status.color = COLORS["accent2"]
             self._safe_update()
-        threading.Thread(target=worker, daemon=True).start()
+            self.app.navigate("settings")
 
-    def _playit_log(self, line):
-        if self.playit.claim_url: self.playit_status.value = f"Claim/setup URL: {self.playit.claim_url}"
-        if self.playit.tunnel_address: self.playit_address.value = f"Public address: {self.playit.tunnel_address}"
-        self._safe_update()
-
-    def _start_playit(self, e):
-        port = 25565; bedrock = False
-        if self.selected:
-            cfg = self.sm.servers.get(self.selected)
-            if cfg: port = cfg.port; bedrock = cfg.loader == "bedrock"
-        ok = self.playit.start(port, bedrock)
-        self.playit_status.color = COLORS["accent2"] if ok else COLORS["danger"]
-        self.playit_status.value = "✓ Playit agent started. Existing agent credentials are reused." if ok else "✕ Playit agent could not start."
-        self._safe_update()
-
-    def _stop_playit(self, e):
-        self.playit.stop(); self.playit_status.value = "Playit agent stopped."; self._safe_update()
+        appearance = self._card("Appearance", "Customize MineHoster without losing the neutral default.", [ft.Row([accent_dd, mode_dd], wrap=True), ft.ElevatedButton("Save Appearance", bgcolor=COLORS["accent"], color=COLORS["bg"], on_click=save_appearance), self.appearance_status])
+        jre_buttons = [ft.ElevatedButton(f"Download JRE {v}", bgcolor=COLORS["surface2"], color=COLORS["text"], on_click=lambda e, version=v: self._download_jre(version)) for v in (17, 21, 25)]
+        jre = self._card("Java Runtime Manager", "MineHoster automatically selects a compatible private JRE for each Minecraft version.", [ft.Row(jre_buttons, wrap=True), self.jre_progress, self.jre_status, self._installed_jres_text()])
+        world = self._card("World Management", "Generate and apply a seed or reset the selected server world.", [ft.Row([ft.TextField(label="World seed", expand=True, value=self.sm.get_properties(self.selected).get("level-seed", "") if self.selected else ""), ft.ElevatedButton("Generate Seed", on_click=self._generate_seed)], wrap=True), ft.Row([ft.ElevatedButton("Reset World", bgcolor=COLORS["danger"], color=COLORS["text"], on_click=self._reset_world), self.world_status])])
+        maintenance = self._card("Maintenance", "Refresh metadata or remove the selected server.", [ft.Row([ft.ElevatedButton("Refresh Version Cache", bgcolor=COLORS["surface2"], color=COLORS["text"], on_click=self._clear_cache), ft.Text("Re-fetch Minecraft and loader version lists.", color=COLORS["subtext"], size=12)]), ft.Row([ft.ElevatedButton("Delete Selected Server", bgcolor=COLORS["danger"], color=COLORS["text"], on_click=self._delete_server), ft.Text("Permanently deletes the selected server and files.", color=COLORS["danger"], size=12)])])
+        return ft.Container(content=ft.Column([ft.Text("Server Settings", size=24, weight=ft.FontWeight.BOLD, color=COLORS["text"]), ft.Text("Everything here is editable; changes are written to local MineHoster data.", color=COLORS["subtext"], size=13), ft.Container(height=16), appearance, ft.Container(height=14), self._card("Server Properties", "Edit the actual server.properties file for the selected server.", server_controls), ft.Container(height=14), jre, ft.Container(height=14), world, ft.Container(height=14), maintenance], scroll=ft.ScrollMode.AUTO), padding=32, expand=True)
 
     def _load_props(self):
         if not self.selected: return
@@ -149,50 +89,51 @@ class SettingsView:
             field = ft.TextField(label=key, value=props[key], border_color=COLORS["border"], focused_border_color=COLORS["accent"], label_style=ft.TextStyle(color=COLORS["subtext"]), color=COLORS["text"], bgcolor=COLORS["surface2"])
             self.prop_fields[key] = field; self.props_col.controls.append(field)
 
-    def _load_seed(self):
-        props = self.sm.get_properties(self.selected) if self.selected else {}
-        self.seed_field.value = props.get("level-seed", "")
+    def _on_server_change(self, e):
+        self.selected = e.control.value; self.app.selected_server = self.selected; self._load_props(); self._safe_update()
 
     def _save_props(self, e):
         if not self.selected: return
-        self.sm.update_properties(self.selected, {key: field.value for key, field in self.prop_fields.items()}); self.status_text.value = "✓ Saved!"; self.status_text.color = COLORS["accent2"]; self._safe_update()
+        if self.sm.is_running(self.selected):
+            self.status_text.value = "Stop the server before changing server.properties."; self.status_text.color = COLORS["warning"]; self._safe_update(); return
+        ok = self.sm.update_properties(self.selected, {k: f.value for k, f in self.prop_fields.items()})
+        self.status_text.value = "✓ Server properties saved." if ok else "✕ Could not save server properties."; self.status_text.color = COLORS["accent2"] if ok else COLORS["danger"]; self._safe_update()
+
+    def _installed_jres_text(self):
+        installed = installed_jres(); text = ", ".join(f"Java {v}" for v, _, _ in installed) if installed else "No private JREs downloaded yet."; return ft.Text(f"Installed: {text}", color=COLORS["muted"], size=11)
+
+    def _download_jre(self, version):
+        self.jre_progress.visible = True; self.jre_progress.value = 0; self.jre_status.value = f"Preparing JRE {version}..."; self._safe_update()
+        def worker():
+            try:
+                def progress(stage, message, percent=None):
+                    self.jre_status.value = message
+                    if percent is not None: self.jre_progress.value = percent / 100
+                    self._safe_update()
+                download_java(version, progress); self.jre_status.value = f"✓ JRE {version} is ready."; self.jre_status.color = COLORS["accent2"]
+            except Exception as exc: self.jre_status.value = f"✕ JRE {version} failed: {exc}"; self.jre_status.color = COLORS["danger"]
+            finally: self.jre_progress.visible = False; self._safe_update()
+        threading.Thread(target=worker, daemon=True).start()
 
     def _generate_seed(self, e):
-        self.seed_field.value = str(random.randint(-(2**63), 2**63 - 1)); self._safe_update()
-
-    def _apply_seed(self, e):
-        if not self.selected: return
-        seed = (self.seed_field.value or "").strip()
-        self.sm.update_properties(self.selected, {"level-seed": seed})
-        self.world_status.value = "✓ Seed saved. Reset the world to generate a new world from it."; self.world_status.color = COLORS["accent2"]; self._safe_update()
+        self.status_text.value = str(random.randint(-(2**63), 2**63 - 1)); self.status_text.color = COLORS["accent2"]; self._safe_update()
 
     def _reset_world(self, e):
         if not self.selected: return
-        if self.sm.is_running(self.selected):
-            self.world_status.value = "✕ Stop the server before resetting its world."; self.world_status.color = COLORS["danger"]; self._safe_update(); return
+        if self.sm.is_running(self.selected): self.world_status.value = "✕ Stop the server before resetting its world."; self.world_status.color = COLORS["danger"]; self._safe_update(); return
         cfg = self.sm.servers.get(self.selected)
         if not cfg: return
-        folder = Path(cfg.folder)
         removed = []
         for name in ("world", "world_nether", "world_the_end"):
-            path = folder / name
-            if path.exists():
-                shutil.rmtree(path, ignore_errors=True); removed.append(name)
-        self.world_status.color = COLORS["accent2"]
-        self.world_status.value = "✓ World reset: " + (", ".join(removed) if removed else "no world folders existed yet")
-        self._safe_update()
+            path = Path(cfg.folder) / name
+            if path.exists(): shutil.rmtree(path, ignore_errors=True); removed.append(name)
+        self.world_status.value = "✓ World reset: " + (", ".join(removed) if removed else "no world folders existed yet"); self.world_status.color = COLORS["accent2"]; self._safe_update()
 
-    def _on_server_change(self, e):
-        self.selected = e.control.value; self._load_props(); self._load_seed(); self._safe_update()
-
-    def _clear_cache(self, e):
-        clear_cache(); e.control.text = "✓ Cache Cleared"; self._safe_update()
+    def _clear_cache(self, e): clear_cache(); self.status_text.value = "✓ Version cache cleared."; self._safe_update()
 
     def _delete_server(self, e):
-        if self.selected:
-            self.sm.delete_server(self.selected); self.selected = None; self.app.selected_server = None; self.app.navigate("dashboard")
+        if self.selected: self.sm.delete_server(self.selected); self.selected = None; self.app.selected_server = None; self.app.navigate("dashboard")
 
     def _safe_update(self):
-        for control in (self.jre_progress, self.jre_status, self.playit_progress, self.playit_status, self.playit_address, self.seed_field, self.world_status, self.status_text):
-            try: control.update()
-            except Exception: pass
+        try: self.app.page.update()
+        except Exception: pass
