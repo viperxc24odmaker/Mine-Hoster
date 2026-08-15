@@ -49,9 +49,7 @@ class SettingsView:
                 ft.Container(height=8),
                 *controls,
             ], spacing=8),
-            bgcolor=COLORS["card"],
-            border_radius=12,
-            padding=20,
+            bgcolor=COLORS["card"], border_radius=12, padding=20,
             border=ft.border.all(1, COLORS["border"]),
             animate_opacity=ft.Animation(180, ft.AnimationCurve.EASE_OUT),
             animate_scale=ft.Animation(180, ft.AnimationCurve.EASE_OUT),
@@ -61,10 +59,7 @@ class SettingsView:
         typed = ft.TextField(label=f"Type {require_text} to confirm" if require_text else None, visible=bool(require_text), width=360)
         dialog = ft.AlertDialog(modal=True)
         dialog.title = ft.Text(title, color=COLORS["text"])
-        dialog.content = ft.Column([
-            ft.Text(message, color=COLORS["subtext"]),
-            typed,
-        ], tight=True, spacing=12)
+        dialog.content = ft.Column([ft.Text(message, color=COLORS["subtext"]), typed], tight=True, spacing=12)
 
         def close(_=None):
             try:
@@ -83,12 +78,7 @@ class SettingsView:
 
         dialog.actions = [
             ft.TextButton("Cancel", on_click=close),
-            ft.ElevatedButton(
-                confirm_label,
-                bgcolor=COLORS["danger"] if destructive else COLORS["accent"],
-                color=COLORS["text"] if destructive else COLORS["bg"],
-                on_click=confirm,
-            ),
+            ft.ElevatedButton(confirm_label, bgcolor=COLORS["danger"] if destructive else COLORS["accent"], color=COLORS["text"] if destructive else COLORS["bg"], on_click=confirm),
         ]
         self.app.page.open(dialog)
 
@@ -138,7 +128,23 @@ class SettingsView:
             ft.Row([ft.ElevatedButton("Reset MineHoster", bgcolor=COLORS["danger"], color=COLORS["text"], on_click=self._confirm_full_reset), ft.Text("Factory reset: removes MineHoster settings, schedules, cache, and all local servers.", color=COLORS["danger"], size=12)]),
             self.maintenance_status,
         ])
-        return ft.Container(content=ft.Column([ft.Text("Server Settings", size=24, weight=ft.FontWeight.BOLD, color=COLORS["text"]), ft.Text("Everything here is editable; changes are written to local MineHoster data.", color=COLORS["subtext"], size=13), ft.Container(height=16), appearance, ft.Container(height=14), self._card("Server Properties", "Edit the actual server.properties file for the selected server.", server_controls), ft.Container(height=14), jre, ft.Container(height=14), world, ft.Container(height=14), maintenance], scroll=ft.ScrollMode.AUTO), padding=32, expand=True)
+        scroll_content = ft.Column([
+            ft.Text("Server Settings", size=24, weight=ft.FontWeight.BOLD, color=COLORS["text"]),
+            ft.Text("Everything here is editable; changes are written to local MineHoster data.", color=COLORS["subtext"], size=13),
+            ft.Container(height=16), appearance, ft.Container(height=14),
+            self._card("Server Properties", "Edit the actual server.properties file for the selected server.", server_controls),
+            ft.Container(height=14), jre, ft.Container(height=14), world,
+            ft.Container(height=90),
+        ], scroll=ft.ScrollMode.AUTO, expand=True)
+        # Maintenance is intentionally outside the scrolling region so it stays
+        # pinned to the viewport while the user edits long server.properties lists.
+        maintenance_bar = ft.Container(
+            content=maintenance,
+            bgcolor=COLORS["bg"],
+            padding=ft.padding.only(top=8),
+            animate_opacity=ft.Animation(180, ft.AnimationCurve.EASE_OUT),
+        )
+        return ft.Container(content=ft.Column([scroll_content, maintenance_bar], spacing=0, expand=True), padding=32, expand=True)
 
     def _load_props(self):
         if not self.selected:
