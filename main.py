@@ -15,8 +15,7 @@ from src.runtime_scheduler import start_scheduler
 
 
 def _cached_ensure_java(required, progress_cb=None):
-    runtime_dir = Path.home() / ".minehoster" / "runtimes"
-    exe = "java.exe" if os.name == "nt" else "java"
+    runtime_dir = Path.home() / ".minehoster" / "runtimes"; exe = "java.exe" if os.name == "nt" else "java"
     for root in runtime_dir.glob("temurin-*"):
         java = root / "bin" / exe
         if not java.is_file(): continue
@@ -31,9 +30,7 @@ def _cached_ensure_java(required, progress_cb=None):
         except (OSError, subprocess.SubprocessError, ValueError, IndexError): pass
     return _real_ensure_java(required, progress_cb)
 
-
-_server_manager.ensure_java = _cached_ensure_java
-_server_manager._find_java = _cached_ensure_java
+_server_manager.ensure_java = _cached_ensure_java; _server_manager._find_java = _cached_ensure_java
 
 
 def _build_sidebar(self):
@@ -46,34 +43,18 @@ def _build_sidebar(self):
 
 
 def _navigate(self, view_key):
-    views = {
-        "dashboard": __import__("src.views.dashboard", fromlist=["DashboardView"]).DashboardView,
-        "bedrock": __import__("src.views.bedrock", fromlist=["BedrockView"]).BedrockView,
-        "create": __import__("src.views.create_server", fromlist=["CreateServerView"]).CreateServerView,
-        "console": __import__("src.views.console", fromlist=["ConsoleView"]).ConsoleView,
-        "files": __import__("src.views.files", fromlist=["FileManagerView"]).FileManagerView,
-        "plugins": __import__("src.views.plugins", fromlist=["PluginsView"]).PluginsView,
-        "players": PlayersViewV2,
-        "playit": PlayitTunnelView,
-        "settings": SettingsViewV2,
-        "hosting": HostingSettingsViewV2,
-    }
+    views = {"dashboard": __import__("src.views.dashboard", fromlist=["DashboardView"]).DashboardView, "bedrock": __import__("src.views.bedrock", fromlist=["BedrockView"]).BedrockView, "create": __import__("src.views.create_server", fromlist=["CreateServerView"]).CreateServerView, "console": __import__("src.views.console", fromlist=["ConsoleView"]).ConsoleView, "files": __import__("src.views.files", fromlist=["FileManagerView"]).FileManagerView, "plugins": __import__("src.views.plugins", fromlist=["PluginsView"]).PluginsView, "players": PlayersViewV2, "playit": PlayitTunnelView, "settings": SettingsViewV2, "hosting": HostingSettingsViewV2}
     if self._main_content is None: return
     self._set_nav_state(view_key)
     try: self._main_content.content = views.get(view_key, views["dashboard"])(self).build(); self.page.update()
     except Exception as exc:
-        self._main_content.content = ft.Container(content=ft.Column([ft.Text("Section failed to load", size=22, weight=ft.FontWeight.BOLD, color=COLORS["text"]), ft.Text(str(exc), color=COLORS["danger"], selectable=True), ft.Button("Back to Overview", on_click=lambda e: self.navigate("dashboard"))], spacing=12), padding=30, expand=True); self.page.update()
+        self._main_content.content = ft.Container(content=ft.Column([ft.Text("Section failed to load", size=22, weight=ft.FontWeight.BOLD, color=COLORS["text"]), ft.Text(str(exc), color=COLORS["danger"], selectable=True), ft.ElevatedButton("Back to Overview", on_click=lambda e: self.navigate("dashboard"))], spacing=12), padding=30, expand=True); self.page.update()
 
-
-MineHosterApp._build_sidebar = _build_sidebar
-MineHosterApp.navigate = _navigate
-
+MineHosterApp._build_sidebar = _build_sidebar; MineHosterApp.navigate = _navigate
 
 def main(page: ft.Page):
-    app = MineHosterApp(page)
-    app.initialize()
+    app = MineHosterApp(page); app.initialize()
     try: start_scheduler()
     except Exception: pass
-
 
 ft.app(target=main)
