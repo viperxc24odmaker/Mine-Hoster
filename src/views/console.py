@@ -1,8 +1,10 @@
 import flet as ft
 import threading
+import webbrowser
 from src.playit import PlayitManager
 from src.server_manager import ServerManager
 from src.theme import COLORS
+from src.mclogs import upload_log
 
 
 class ConsoleView:
@@ -20,8 +22,10 @@ class ConsoleView:
         )
         self.status_text = ft.Text("No server selected", color=COLORS["subtext"], size=10)
         self.tunnel_text = ft.Text("Tunnel: inactive", color=COLORS["subtext"], size=10)
+        self.upload_status = ft.Text("", color=COLORS["subtext"], size=10)
         self.playit_running = False
         self.start_btn = None
+        self.upload_btn = None
 
     def build(self):
         servers = self.sm.get_servers()
@@ -41,6 +45,7 @@ class ConsoleView:
             "Stop server" if running else "Start server", bgcolor=COLORS["danger"] if running else COLORS["accent2"],
             color=COLORS["text"], on_click=self._toggle_server,
         )
+        self.upload_btn = ft.ElevatedButton("Upload to mclo.gs", bgcolor=COLORS["surface2"], color=COLORS["text"], on_click=self._upload_mclogs)
         server_dd = ft.Dropdown(
             value=self.selected, options=[ft.dropdown.Option(server.name) for server in servers], on_change=self._on_server_change,
             border_color=COLORS["border"], focused_border_color=COLORS["accent"], color=COLORS["text"], bgcolor=COLORS["surface2"], width=210,
@@ -56,10 +61,10 @@ class ConsoleView:
                             ft.Column([ft.Text("Live Console", color=COLORS["text"], size=22, weight=ft.FontWeight.BOLD), self.status_text], spacing=3),
                             server_dd, self.start_btn,
                             ft.ElevatedButton("Restart", bgcolor=COLORS["warning"], color="#111111", on_click=self._restart),
-                        ], spacing=10,
+                        ], spacing=10, wrap=True,
                     ),
                     ft.Row(
-                        [ft.ElevatedButton("Enable playit.gg", bgcolor=COLORS["surface2"], color=COLORS["text"], on_click=self._toggle_playit), self.tunnel_text], spacing=12,
+                        [ft.ElevatedButton("Enable playit.gg", bgcolor=COLORS["surface2"], color=COLORS["text"], on_click=self._toggle_playit), self.tunnel_text, self.upload_btn, self.upload_status], spacing=12, wrap=True,
                     ),
                     ft.Container(
                         content=self.log_list, bgcolor="#0A0D12", border=ft.border.all(1, COLORS["border"]), border_radius=12, padding=12, expand=True,
@@ -83,6 +88,50 @@ class ConsoleView:
             self.status_text.update()
         except Exception:
             pass
+
+    def _upload_mclogs(self, e):
+        if not self.selected:
+            return
+        lines = []
+        for control in self.log_list.controls:
+            value = getattr(control, "value", None)
+            if value:
+                lines.append(value)
+        content = "\n".join(lines)
+        if not content:
+            self.upload_status.value = "No console output to upload."
+            self.upload_status.color = COLORS["warning"]
+            self.upload_status.update()
+            return
+        self.upload_btn.disabled = True
+        self.upload_status.value = "Uploading..."
+        self.upload_status.color = COLORS["subtext"]
+        try:
+            self.upload_status.update()
+            self.upload_btn.update()
+        except Exception:
+            pass
+
+        def worker():
+            try:
+                result = upload_log(content, source=f"MineHoster - {self.selected}")
+                url = result.get("url", "")
+                self.upload_status.value = f"✓ Uploaded: {url}"
+                self.upload_status.color = COLORS["accent2"]
+                if url:
+                    webbrowser.open(url)
+            except Exception as exc:
+                self.upload_status.value = f"✕ Upload failed: {exc}"
+                self.upload_status.color = COLORS["danger"]
+            finally:
+                self.upload_btn.disabled = False
+                try:
+                    self.upload_status.update()
+                    self.upload_btn.update()
+                except Exception:
+                    pass
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _send_cmd(self, e):
         command = (self.cmd_field.value or "").strip()
